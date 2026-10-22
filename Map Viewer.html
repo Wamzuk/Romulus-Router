@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeoJSON map viewer</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root{--bg:#f4f6f8;--fg:#14202b;--card:#fff;--mut:#5c6b78;--bd:#d3dbe2;--ac:#0b7a75;--r:6px}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1820;--fg:#e6edf3;--card:#17232d;--mut:#93a4b3;--bd:#2a3a47;--ac:#3ccfc6}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+main{max-width:920px;margin:0 auto;padding:28px 18px 60px}
+h1{font:700 26px/1.2 Georgia,"Times New Roman",serif;margin:0 0 4px}
+p.sub{color:var(--mut);margin:0 0 22px;max-width:62ch}
+section{background:var(--card);border:1px solid var(--bd);border-radius:var(--r);padding:18px;margin-bottom:16px}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+label{font-size:13px;color:var(--mut)}
+input[type=file],button{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--bd);border-radius:var(--r);padding:7px 10px}
+button{cursor:pointer;background:var(--fg);color:var(--bg);border-color:var(--fg);font-weight:600}
+button:focus-visible,input:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+#status{margin-top:12px;color:var(--mut);font-size:14px}
+#map{height:520px;border-radius:var(--r);border:1px solid var(--bd)}
+.note{font-size:13px;color:var(--mut);margin:0 0 12px}
+#searchSection{display:none}
+#search{flex:1;min-width:220px}
+#results{margin-top:12px;max-height:260px;overflow-y:auto;border:1px solid var(--bd);border-radius:var(--r)}
+#results:empty{display:none}
+.result{padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--bd)}
+.result:last-child{border-bottom:0}
+.result:hover,.result:focus{background:var(--bg);outline:none}
+.result b{display:block}
+.result span{font-size:13px;color:var(--mut)}
+.result mark{background:var(--ac);color:var(--bg);border-radius:2px;padding:0 1px}
+#searchInfo{font-size:13px;color:var(--mut);margin-top:8px}
+.popup b{display:block;margin-bottom:4px}
+.popup table{border-collapse:collapse;font-size:13px}
+.popup td{padding:2px 6px;border-bottom:1px solid var(--bd);vertical-align:top}
+.popup td:first-child{color:var(--mut);white-space:nowrap}
+</style>
+</head>
+<body>
+<main>
+<h1>GeoJSON map viewer</h1>
+<p class="sub">Upload a GeoJSON file and see its points, lines, and polygons drawn on a map. Click any feature to read its properties.</p>
+
+<section>
+<div class="row">
+<label>Upload GeoJSON file <input type="file" id="file" accept=".geojson,.json,application/geo+json,application/json"></label>
+</div>
+<div id="status">No data loaded. Upload a .geojson or .json file to begin.</div>
+</section>
+
+<section id="searchSection">
+<div class="row">
+<input type="search" id="search" placeholder="Search features by name or any property value...">
+</div>
+<div id="searchInfo"></div>
+<div id="results"></div>
+</section>
+
+<section>
+<p class="note">Features are color-coded; click a feature for its details. The map auto-zooms to fit the data.</p>
+<div id="map"></div>
+</section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let map, dataLayer;
+// Search index: one entry per feature with its layer and a lowercased
+// concatenation of all property keys/values for matching.
+let index = [];
+
+function initMap(){
+  if(typeof L === 'undefined'){
+    $('status').textContent = 'The map library could not load. Check your internet connection.';
+    return false;
+  }
+  if(!map){
+    map = L.map('map').setView([20, 0], 2);
+    // Esri World Imagery: free satellite basemap that needs no API key and
+    // no account. (Carto now requires an API key; OSM's own tile server
+    // blocks file:// / app requests that don't follow its usage policy.)
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+    }).addTo(map);
+  }
+  return true;
+}
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&','<':'<','>':'>','"':'"'}[c]));
+
+// Build a popup from a feature's properties.
+function popupFor(feature){
+  const p = feature.properties || {};
+  const name = p.name || p.Name || p.title || p.Title || '';
+  const keys = Object.keys(p);
+  let html = '<div class="popup">';
+  if(name) html += '<b>' + esc(name) + '</b>';
+  if(keys.length){
+    html += '<table>';
+    for(const k of keys){
+      let v = p[k];
+      if(v !== null && typeof v === 'object') v = JSON.stringify(v);
+      html += '<tr><td>' + esc(k) + '</td><td>' + esc(v) + '</td></tr>';
+    }
+    html += '</table>';
+  }
+  if(!name && !keys.length) html += '<i>(no properties)</i>';
+  return html + '</div>';
+}
+
+// A short human label for a feature, for the results list.
+function labelFor(feature){
+  const p = feature.properties || {};
+  return p.name || p.Name || p.title || p.Title || p.id || p.ID ||
+    (feature.geometry ? feature.geometry.type : 'Feature');
+}
+
+// Draw points as circle markers so they are always visible.
+function pointToLayer(feature, latlng){
+  return L.circleMarker(latlng, {
+    radius: 6, color: '#fff', weight: 2,
+    fillColor: '#c2410c', fillOpacity: 0.9
+  });
+}
+
+function renderGeoJSON(data){
+  if(!initMap()) return;
+  if(dataLayer) dataLayer.remove();
+  index = [];
+
+  dataLayer = L.geoJSON(data, {
+    pointToLayer,
+    style: { color: '#0b7a75', weight: 3, opacity: 0.9, fillColor: '#0b7a75', fillOpacity: 0.2 },
+    onEachFeature: (feature, layer) => {
+      layer.bindPopup(popupFor(feature));
+      // Build a searchable text blob from every property key and value.
+      const p = feature.properties || {};
+      let text = '';
+      for(const k of Object.keys(p)){
+        let v = p[k];
+        if(v !== null && typeof v === 'object') v = JSON.stringify(v);
+        text += k + ' ' + v + ' ';
+      }
+      index.push({ feature, layer, label: labelFor(feature), text: text.toLowerCase() });
+    }
+  }).addTo(map);
+
+  const bounds = dataLayer.getBounds();
+  if(bounds.isValid()){
+    map.fitBounds(bounds.pad(0.1));
+  } else {
+    $('status').textContent = 'File loaded, but it contained no map geometry to display.';
+    $('searchSection').style.display = 'none';
+    return;
+  }
+
+  $('status').textContent = index.length.toLocaleString() + ' feature' + (index.length === 1 ? '' : 's') + ' loaded and displayed.';
+
+  // Reveal and reset the search UI now that data is loaded.
+  $('searchSection').style.display = '';
+  $('search').value = '';
+  runSearch('');
+}
+
+// Highlight a chosen feature: pan/zoom to it, flash it, open its popup.
+let highlighted = null;
+function goToFeature(entry){
+  const layer = entry.layer;
+  if(highlighted && highlighted.setStyle && highlighted._prevStyle){
+    highlighted.setStyle(highlighted._prevStyle);
+  }
+  // Fit the map to the feature.
+  if(layer.getBounds){
+    map.fitBounds(layer.getBounds().pad(0.3), { maxZoom: 17 });
+  } else if(layer.getLatLng){
+    map.setView(layer.getLatLng(), Math.max(map.getZoom(), 15));
+  }
+  // Temporarily emphasize it.
+  if(layer.setStyle){
+    const original = entry.feature.geometry && entry.feature.geometry.type.indexOf('Point') >= 0
+      ? { radius: 6, color: '#fff', weight: 2, fillColor: '#c2410c', fillOpacity: 0.9 }
+      : { color: '#0b7a75', weight: 3, opacity: 0.9, fillColor: '#0b7a75', fillOpacity: 0.2 };
+    if(entry.feature.geometry && entry.feature.geometry.type.indexOf('Point') >= 0){
+      layer.setStyle({ radius: 9, color: '#fff', weight: 3, fillColor: '#f59e0b', fillOpacity: 1 });
+    } else {
+      layer.setStyle({ color: '#f59e0b', weight: 5, fillColor: '#f59e0b', fillOpacity: 0.4 });
+    }
+    highlighted = layer;
+    highlighted._prevStyle = original;
+  }
+  layer.openPopup && layer.openPopup();
+}
+
+// Escape a string for safe use in a regex.
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Render the results list for the current query.
+function runSearch(q){
+  const results = $('results');
+  const info = $('searchInfo');
+  q = q.trim().toLowerCase();
+
+  const matches = q === '' ? index : index.filter(e =>
+    e.text.includes(q) || e.label.toLowerCase().includes(q));
+
+  if(q === ''){
+    info.textContent = index.length.toLocaleString() + ' feature' + (index.length === 1 ? '' : 's') + '. Type to filter.';
+  } else {
+    info.textContent = matches.length.toLocaleString() + ' match' + (matches.length === 1 ? '' : 'es') + ' for "' + q + '".';
+  }
+
+  const shown = matches.slice(0, 500); // cap the DOM for big files
+  const re = q ? new RegExp('(' + reEsc(q) + ')', 'ig') : null;
+  const hl = s => q ? esc(s).replace(re, '<mark>$1</mark>') : esc(s);
+
+  results.innerHTML = shown.map((e, i) => {
+    const p = e.feature.properties || {};
+    // A small preview: first couple of non-empty property values.
+    const preview = Object.entries(p)
+      .filter(([, v]) => v !== null && v !== '' && typeof v !== 'object')
+      .slice(0, 3).map(([k, v]) => k + ': ' + v).join('  ·  ');
+    return '<div class="result" tabindex="0" data-i="' + i + '">' +
+      '<b>' + hl(String(e.label)) + '</b>' +
+      (preview ? '<span>' + hl(preview) + '</span>' : '') +
+    '</div>';
+  }).join('');
+
+  if(q && matches.length > shown.length){
+    info.textContent += ' Showing the first ' + shown.length.toLocaleString() + '.';
+  }
+
+  // Wire clicks/keyboard on each result to the matching entry.
+  results.querySelectorAll('.result').forEach(el => {
+    const entry = shown[+el.dataset.i];
+    el.onclick = () => goToFeature(entry);
+    el.onkeydown = ev => { if(ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); goToFeature(entry); } };
+  });
+}
+
+$('search').oninput = e => runSearch(e.target.value);
+
+$('file').onchange = async e => {
+  const f = e.target.files[0];
+  if(!f) return;
+  $('status').textContent = 'Reading file...';
+  try{
+    const text = await f.text();
+    const data = JSON.parse(text);
+    renderGeoJSON(data);
+  }catch(err){
+    $('status').textContent = 'Could not read that file as GeoJSON: ' + err.message;
+  }
+};
+
+initMap();
+</script>
+</body>
+</html>
