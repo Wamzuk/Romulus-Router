@@ -111,7 +111,7 @@ In the included sample file only 8 of the 265 roads have a speed limit and 14 ar
 
 ## Credits and licenses
 
-The map and data come from open projects. Keep their credits in any published version, and check each project's license page for the exact terms.
+The map and data come from open projects.
 
 - Road data: [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, through Overture Maps.
 - Places: Overture Maps (from Meta).
@@ -119,11 +119,3 @@ The map and data come from open projects. Keep their credits in any published ve
 - Map tiles: [OpenFreeMap](https://openfreemap.org/), © [OpenMapTiles](https://www.openmaptiles.org/), data from OpenStreetMap.
 - Place search: Nominatim (OpenStreetMap). Please keep requests to about one per second.
 - Libraries: Leaflet, MapLibre GL JS, the MapLibre GL Leaflet plugin, and Turf.js.
-
-## To do
-
-- [ ] Write the C++ server (k-d tree, brute-force search, route finding, benchmark)
-- [ ] Add a build file and run instructions
-- [ ] Add the road-data conversion script
-- [ ] Document the `/api/graph`, `/api/route`, and `/api/benchmark` formats
-- [ ] Check that the server ignores the boundary polygon, or add a separate "Load boundary" file box
