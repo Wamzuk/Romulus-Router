@@ -3,234 +3,174 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GeoJSON map viewer</title>
+<title>Romulus Router</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #131c26;
-    --text: #a9b3bf;
-    --title: #f4f6f8;
-    --strong: #eef1f4;
-    --line: #222d3a;
-    --accent: #5fb3d9;
+    --glass: rgba(255,255,255,.82);
+    --text: #5b5675;
+    --title: #3b2a6b;
+    --strong: #2d2150;
+    --muted: #8a84a3;
+    --line: rgba(124,58,237,.14);
+    --accent: #7c3aed;
+    --accent-soft: rgba(124,58,237,.09);
+    --grad: linear-gradient(180deg, #9b5de5 0%, #6d35d6 100%);
+    --field: rgba(255,255,255,.95);
+    --field-line: #ddd6fe;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
-  body {
-    display: flex;
-    background: var(--bg);
-    color: var(--text);
-    font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    font-size: 16px;
-    line-height: 1.5;
-  }
+  body { background: #e8ecef; color: var(--text); font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 16px; line-height: 1.5; overflow: hidden; }
 
-  aside {
-    flex: 0 0 24.6%;
-    min-width: 280px;
-    max-width: 560px;
-    height: 100%;
-    overflow-y: auto;
-    background: var(--bg);
-    display: flex;
-    flex-direction: column;
-  }
-  .head { padding: 10px 11px 0; }
-  h1 {
-    margin: 0 0 4px;
-    font-size: 28px;
-    line-height: 1.2;
-    font-weight: 600;
-    color: var(--title);
-    letter-spacing: -0.01em;
-  }
-  .intro { margin: 0; font-size: 18px; line-height: 1.75; color: var(--text); }
+  #map { position: fixed; inset: 0; background: #aab4e0; }
 
-  .drop {
-    display: block;
-    margin: 28px 11px 0;
-    padding: 30px 12px 26px;
-    border: 1px dashed #3a4656;
-    border-radius: 6px;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color .15s, background .15s;
-  }
-  .drop:hover, .drop.over, .drop:focus-within {
-    border-color: var(--accent);
-    background: rgba(95, 179, 217, .06);
-  }
-  .drop strong { display: block; color: var(--strong); font-size: 20px; font-weight: 500; }
-  .drop span { display: block; margin-top: 6px; font-size: 18px; color: #8f9aa7; }
+  .toppill { position: absolute; z-index: 1000; top: 16px; left: calc(50% + 208px); transform: translateX(-50%); padding: 10px 34px; border-radius: 999px; background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 6px 24px rgba(76,29,149,.15); text-align: center; pointer-events: none; }
+  .toppill h1 { margin: 0; font-size: 22px; line-height: 1.2; font-weight: 700; color: var(--title); }
+  .toppill small { display: block; font-size: 13px; font-weight: 600; color: var(--muted); }
+
+  aside { position: absolute; z-index: 1000; top: 16px; left: 16px; width: 400px; max-width: calc(100% - 32px); max-height: calc(100% - 32px); overflow-y: auto; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.7); border-radius: 24px; box-shadow: 0 10px 40px rgba(76,29,149,.18); }
+  .head { padding: 20px 20px 0; }
+  .intro { margin: 0; font-size: 15px; line-height: 1.55; color: var(--text); }
+
+  .drop { display: block; margin: 16px 20px 0; padding: 22px 12px; border: 2px dashed #c4b5fd; border-radius: 16px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
+  .drop:hover, .drop.over, .drop:focus-within { border-color: var(--accent); background: var(--accent-soft); }
+  .drop strong { display: block; color: var(--accent); font-size: 17px; font-weight: 800; }
+  .drop span { display: block; margin-top: 4px; font-size: 14px; color: var(--muted); }
   .drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 
-  .status { margin: 20px 11px 0; padding-bottom: 28px; font-size: 20px; color: var(--text); }
-  .status.error { color: #ff9b8f; }
+  .status { margin: 14px 20px 0; padding-bottom: 16px; font-size: 15px; font-weight: 600; color: var(--text); }
+  .status.error { color: #dc2626; }
 
-  .panel { border-top: 1px solid var(--line); padding: 36px 11px 24px; flex: 1; }
-  .panel > p { margin: 0; font-size: 20px; line-height: 1.6; }
-  .search-wrap, .route-wrap { display: none; }
-  .loaded .search-wrap, .loaded .route-wrap { display: block; }
-  .loaded .panel > p { display: none; }
+  .panel { border-top: 1px solid var(--line); padding: 18px 20px 20px; flex: 1; }
+  .panel > p { margin: 0; font-size: 15px; line-height: 1.55; }
 
-  .route-wrap { padding-bottom: 24px; margin-bottom: 24px; border-bottom: 1px solid var(--line); }
-  .prompt { margin: 0 0 16px; padding: 12px 14px; border-radius: 6px; background: rgba(95,179,217,.1); border-left: 3px solid var(--accent); color: var(--strong); font-size: 18px; line-height: 1.45; }
-  .prompt.done { background: rgba(80,200,120,.1); border-left-color: #50c878; }
+  .route-wrap { padding-bottom: 0; margin-bottom: 0; }
+  .prompt { margin: 0 0 14px; padding: 10px 14px; border-radius: 14px; background: var(--accent-soft); color: var(--strong); font-size: 15px; font-weight: 600; line-height: 1.4; }
+  .prompt.done { background: rgba(34,197,94,.12); }
   .pt { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
   .pt .info { flex: 1; min-width: 0; }
-  .pt .lbl { font-size: 15px; color: #8f9aa7; }
-  .pt .val { font-size: 17px; color: var(--strong); overflow-wrap: anywhere; }
+  .pt .lbl { font-size: 14px; color: var(--muted); }
+  .pt .val { font-size: 16px; color: var(--strong); overflow-wrap: anywhere; }
   .pt.active .lbl { color: var(--accent); }
-  .badge { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 15px; color: #fff; border: 2px solid #fff; }
-  .badge.s { background: #2e9e5b; }
-  .badge.e { background: #d9453d; }
-  .btn { font: inherit; font-size: 15px; padding: 6px 12px; border-radius: 6px; border: 1px solid #3a4656; background: #1a2532; color: var(--strong); cursor: pointer; }
+  .badge { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 14px; color: #fff; border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.2); }
+  .badge.s { background: #f97316; }
+  .badge.e { background: #1f2937; }
+
+  .btn { font: inherit; font-size: 15px; font-weight: 700; padding: 9px 16px; border-radius: 14px; border: 1px solid var(--field-line); background: #fff; color: var(--accent); cursor: pointer; transition: transform .1s, box-shadow .15s; }
   .btn:hover, .btn:focus-visible { border-color: var(--accent); outline: none; }
   .btn:disabled { opacity: .45; cursor: not-allowed; }
-  .btn.link { border: 0; background: none; color: var(--accent); padding: 6px 0; margin-top: 4px; }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #05222f; font-weight: 600; }
-  .btn.primary:hover:not(:disabled), .btn.primary:focus-visible:not(:disabled) { background: #7cc3e3; }
-  .pin { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font: 600 15px "IBM Plex Sans", sans-serif; color: #fff; border: 2px solid #fff; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
-  .pin.s { background: #2e9e5b; }
-  .pin.e { background: #d9453d; }
-  .search-wrap input {
-    width: 100%;
-    padding: 10px 12px;
-    background: #0e151d;
-    border: 1px solid #2c3948;
-    border-radius: 6px;
-    color: var(--strong);
-    font: inherit;
-    font-size: 17px;
-  }
-  .search-wrap input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .count { margin: 10px 0 6px; font-size: 15px; color: #8f9aa7; }
-  .results { list-style: none; margin: 0; padding: 0; }
-  .results li button {
-    display: block; width: 100%; text-align: left;
-    padding: 9px 8px; margin: 0;
-    background: none; border: 0; border-bottom: 1px solid var(--line);
-    color: var(--text); font: inherit; font-size: 16px; cursor: pointer;
-  }
-  .results li button:hover, .results li button:focus-visible { background: #1a2532; color: var(--strong); outline: none; }
-  .results .kind { display: block; font-size: 13px; color: #7d8895; }
+  .btn.link { border: 0; background: none; color: var(--accent); padding: 6px 0; margin-top: 2px; }
+  .btn.primary { background: var(--grad); border-color: transparent; color: #fff; box-shadow: 0 6px 16px rgba(109,53,214,.35); }
+  .btn.primary:hover:not(:disabled), .btn.primary:focus-visible:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(109,53,214,.45); }
 
-  #map { flex: 1; height: 100%; background: #0f3a52; }
-  .leaflet-container { font-family: inherit; }
-  .leaflet-bar { border: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
-  .leaflet-bar a {
-    width: 44px; height: 44px; line-height: 42px;
-    font-size: 30px; font-weight: 300; color: #111;
-    background: #fff; border-bottom: 1px solid #d9d9d9; border-radius: 0 !important;
-  }
-  .leaflet-bar a:last-child { border-bottom: 0; }
-  .leaflet-bar a:hover { background: #f1f1f1; }
-  .leaflet-top.leaflet-left { top: 0; left: 0; }
-  .leaflet-top.leaflet-left .leaflet-control { margin: 0; }
-  .leaflet-popup-content { font-size: 14px; line-height: 1.45; margin: 12px 14px; max-height: 260px; overflow: auto; }
-  .leaflet-popup-content table { border-collapse: collapse; }
-  .leaflet-popup-content th { text-align: left; padding: 2px 10px 2px 0; color: #444; font-weight: 600; vertical-align: top; }
-  .leaflet-popup-content td { padding: 2px 0; word-break: break-word; }
+  .pin { font-size: 30px; line-height: 1; width: 34px; height: 34px; display: grid; place-items: center; filter: drop-shadow(0 3px 3px rgba(0,0,0,.35)); }
 
-  @media (max-width: 720px) {
-    body { flex-direction: column; }
-    aside { flex: 0 0 auto; max-width: none; height: auto; max-height: 55vh; }
-    #map { height: 45vh; flex: 1 1 45vh; }
-    h1 { font-size: 24px; }
-    .intro, .status, .panel > p { font-size: 16px; }
-  }
+  .pt-input { width: 100%; padding: 10px 14px; background: var(--field); border: 1px solid var(--field-line); border-radius: 14px; color: var(--strong); font: inherit; font-size: 16px; }
+  .pt-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .pt-input.set { border-color: #86d3a5; }
 
-  .field { display: flex; align-items: flex-start; gap: 12px; padding: 8px 0 12px; }
+  .field { display: flex; align-items: flex-start; gap: 12px; padding: 6px 0 10px; }
   .field .info { flex: 1; min-width: 0; position: relative; }
-  .field .lbl { display: block; margin-bottom: 4px; font-size: 15px; color: #8f9aa7; }
+  .field .lbl { display: block; margin-bottom: 4px; font-size: 14px; font-weight: 600; color: var(--muted); }
   .field:focus-within .lbl { color: var(--accent); }
   .field .badge { margin-top: 26px; }
-  .pt-input { width: 100%; padding: 10px 12px; background: #0e151d; border: 1px solid #2c3948; border-radius: 6px; color: var(--strong); font: inherit; font-size: 17px; }
-  .pt-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .pt-input.set { border-color: #3d7a5a; }
-  .suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 1200; margin: 4px 0 0; padding: 4px; list-style: none; background: #1a2532; border: 1px solid #34445a; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.45); max-height: 280px; overflow-y: auto; }
+  .suggest { position: absolute; left: 0; right: 0; top: 100%; z-index: 1200; margin: 4px 0 0; padding: 6px; list-style: none; background: #fff; border: 1px solid var(--field-line); border-radius: 14px; box-shadow: 0 10px 28px rgba(76,29,149,.2); max-height: 260px; overflow-y: auto; }
   .suggest[hidden] { display: none; }
-  .suggest li { padding: 8px 10px; border-radius: 4px; cursor: pointer; font-size: 16px; color: var(--strong); }
-  .suggest li small { display: block; font-size: 13px; color: #8f9aa7; }
-  .suggest li.on, .suggest li:hover { background: #26364a; }
-  .suggest li.empty { cursor: default; color: #8f9aa7; }
+  .suggest li { padding: 8px 10px; border-radius: 10px; cursor: pointer; font-size: 15px; color: var(--strong); }
+  .suggest li small { display: block; font-size: 12px; color: var(--muted); }
+  .suggest li.on, .suggest li:hover { background: var(--accent-soft); }
+  .suggest li.empty { cursor: default; color: var(--muted); }
   .suggest li.empty:hover { background: none; }
 
-  /* ---- Routing controls (added, matches the existing styling) ---- */
   .method { margin: 4px 0 16px; }
-  .method .lbl { display: block; margin-bottom: 8px; font-size: 15px; color: #8f9aa7; }
-  .seg { display: flex; border: 1px solid #2c3948; border-radius: 6px; overflow: hidden; }
-  .seg button {
-    flex: 1; padding: 9px 6px; font: inherit; font-size: 15px;
-    background: #0e151d; color: var(--text); border: 0; border-right: 1px solid #2c3948; cursor: pointer;
-  }
-  .seg button:last-child { border-right: 0; }
-  .seg button.on { background: var(--accent); color: #05222f; font-weight: 600; }
-  .seg button:hover:not(.on) { background: #1a2532; color: var(--strong); }
+  .method .lbl { display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: var(--muted); }
+  .seg { display: flex; padding: 4px; gap: 4px; background: var(--accent-soft); border-radius: 14px; }
+  .seg button { flex: 1; padding: 8px 6px; font: inherit; font-size: 14px; font-weight: 700; background: none; color: var(--accent); border: 0; border-radius: 11px; cursor: pointer; }
+  .seg button.on { background: var(--grad); color: #fff; box-shadow: 0 3px 10px rgba(109,53,214,.35); }
+  .seg button:hover:not(.on) { background: rgba(124,58,237,.12); }
   .actions { display: flex; gap: 10px; margin: 4px 0 2px; }
   .actions .btn { flex: 1; }
 
-  .results-panel { margin-top: 22px; }
-  .results-panel h2 { margin: 0 0 12px; font-size: 20px; font-weight: 600; color: var(--title); }
-  .route-note { margin: 0 0 14px; font-size: 15px; color: #8f9aa7; line-height: 1.5; }
-  .route-note.warn { color: #ffcf9b; }
-  .route-note.same { color: #8fe0a8; }
+  .results-panel { margin-top: 20px; }
+  .results-panel h2 { margin: 0 0 10px; font-size: 18px; font-weight: 800; color: var(--title); }
+  .route-note { margin: 0 0 12px; font-size: 14px; color: var(--muted); line-height: 1.5; }
+  .route-note.warn { color: #c2410c; }
+  .route-note.same { color: #15803d; }
 
-  .route-item {
-    display: flex; align-items: flex-start; gap: 10px;
-    width: 100%; text-align: left;
-    padding: 10px 10px; margin: 0 0 8px;
-    background: #121c26; border: 1px solid var(--line); border-left-width: 4px;
-    border-radius: 6px; color: var(--text); font: inherit; cursor: pointer;
-  }
+  .route-item { display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; margin: 0 0 8px; background: rgba(255,255,255,.9); border: 1px solid var(--line); border-left-width: 5px; border-radius: 14px; color: var(--text); font: inherit; cursor: pointer; }
   .route-item:hover, .route-item:focus-visible { border-color: var(--accent); outline: none; }
-  .route-item.sel { background: #16222f; }
-  .route-item .swatch { flex: 0 0 auto; width: 14px; height: 14px; border-radius: 3px; margin-top: 4px; }
-  .route-item .rtitle { font-size: 16px; color: var(--strong); font-weight: 500; }
-  .route-item .rmeta { font-size: 14px; color: #8f9aa7; }
-  .route-item .rtag { display: inline-block; font-size: 12px; font-weight: 600; color: #05222f; background: var(--accent); border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
+  .route-item.sel { background: #f5f0ff; }
+  .route-item .swatch { flex: 0 0 auto; width: 14px; height: 14px; border-radius: 4px; margin-top: 4px; }
+  .route-item .rtitle { font-size: 16px; color: var(--strong); font-weight: 700; }
+  .route-item .rmeta { font-size: 14px; color: var(--muted); }
+  .route-item .rtag { display: inline-block; font-size: 12px; font-weight: 800; color: #fff; background: var(--accent); border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
 
   .timing { margin: 6px 0 16px; }
   .timing table { width: 100%; border-collapse: collapse; font-size: 14px; }
   .timing th, .timing td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
-  .timing th { color: #8f9aa7; font-weight: 500; }
+  .timing th { color: var(--muted); font-weight: 600; }
   .timing td { color: var(--strong); font-variant-numeric: tabular-nums; }
-  .timing caption { text-align: left; font-size: 15px; color: #8f9aa7; padding: 0 0 6px; }
+  .timing caption { text-align: left; font-size: 14px; color: var(--muted); padding: 0 0 6px; }
   .speedup { font-size: 15px; color: var(--strong); margin: 2px 0 14px; }
   .speedup b { color: var(--accent); }
 
   .bench { margin-top: 10px; }
-  .bench pre { margin: 10px 0 0; padding: 10px 12px; background: #0e151d; border: 1px solid #2c3948; border-radius: 6px; color: var(--strong); font-size: 13px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; }
+  .bench pre { margin: 10px 0 0; padding: 10px 12px; background: var(--field); border: 1px solid var(--field-line); border-radius: 14px; color: var(--strong); font-size: 13px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; }
   .spin { display: inline-block; }
+
+
+  /* Leaflet controls, DriveGuess style */
+  .leaflet-container { font-family: inherit; }
+  .leaflet-top.leaflet-right .leaflet-control { margin: 16px 16px 0 0; }
+  .leaflet-bar { border: 0 !important; border-radius: 999px !important; overflow: hidden; background: var(--glass); backdrop-filter: blur(14px); box-shadow: 0 6px 24px rgba(76,29,149,.18) !important; }
+  .leaflet-bar a { width: 46px; height: 46px; line-height: 44px; font-size: 28px; font-weight: 400; color: var(--accent); background: transparent; border-bottom: 1px solid var(--line); border-radius: 0 !important; }
+  .leaflet-bar a:last-child { border-bottom: 0; }
+  .leaflet-bar a:hover { background: var(--accent-soft); color: var(--accent); }
+  .leaflet-control-attribution { margin: 0 12px 12px 0 !important; padding: 4px 12px !important; border-radius: 999px; background: var(--glass) !important; backdrop-filter: blur(10px); font-size: 12px; color: var(--text); }
+  .leaflet-control-attribution a { color: var(--text); }
+  .leaflet-popup-content-wrapper { border-radius: 16px; }
+  .leaflet-popup-content { font-size: 14px; line-height: 1.45; margin: 12px 14px; max-height: 260px; overflow: auto; }
+  .leaflet-popup-content table { border-collapse: collapse; }
+  .leaflet-popup-content th { text-align: left; padding: 2px 10px 2px 0; color: #444; font-weight: 700; vertical-align: top; }
+  .leaflet-popup-content td { padding: 2px 0; word-break: break-word; }
+
+  @media (max-width: 720px) {
+    aside { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-width: none; max-height: 52vh; border-radius: 24px 24px 0 0; }
+    .toppill { left: 50%; padding: 8px 24px; }
+    .toppill h1 { font-size: 18px; }
+    .leaflet-control-attribution { margin-bottom: calc(52vh + 8px) !important; }
+  }
 </style>
 </head>
 <body>
+  <div class="toppill"><h1>Romulus Router</h1><small>Route finder</small></div>
+
   <aside id="sidebar">
     <div class="head">
-      <h1>GeoJSON map viewer</h1>
-      <p class="intro">Load a GeoJSON file to see its points, lines, and polygons on the map. Click a feature to read its properties.</p>
+      <p class="intro">Search any place or building to set your start and end points. Load a road-network GeoJSON file to find routes.</p>
     </div>
 
     <label class="drop" id="drop">
-      <strong>Choose a GeoJSON file</strong>
+      <strong>Load road network (GeoJSON)</strong>
       <span>or drag it here (.geojson or .json)</span>
       <input type="file" id="file" accept=".geojson,.json,application/geo+json,application/json">
     </label>
 
-    <div class="status" id="status" role="status">No file loaded yet.</div>
+    <div class="status" id="status" role="status">No road network loaded yet. You can already search for places.</div>
 
     <div class="panel">
-      <p>Once a file is loaded, you can search every feature by name or property value here.</p>
       <div class="route-wrap" id="route">
         <p class="prompt" id="prompt"></p>
         <div class="field" id="startField">
           <span class="badge s">A</span>
           <div class="info">
             <label class="lbl" for="startInput">Start point</label>
-            <input type="search" id="startInput" class="pt-input" placeholder="Search by name, property, or lat, lng" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="startList">
+            <input type="search" id="startInput" class="pt-input" placeholder="Search a place, building, or lat, lng" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="startList">
             <ul class="suggest" id="startList" role="listbox" hidden></ul>
           </div>
         </div>
@@ -238,7 +178,7 @@
           <span class="badge e">B</span>
           <div class="info">
             <label class="lbl" for="endInput">End point</label>
-            <input type="search" id="endInput" class="pt-input" placeholder="Search by name, property, or lat, lng" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="endList">
+            <input type="search" id="endInput" class="pt-input" placeholder="Search a place, building, or lat, lng" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="endList">
             <ul class="suggest" id="endList" role="listbox" hidden></ul>
           </div>
         </div>
@@ -263,17 +203,14 @@
         <div class="results-panel" id="routeResults" hidden></div>
         <div class="bench" id="benchResults" hidden></div>
       </div>
-      <div class="search-wrap">
-        <input type="search" id="search" placeholder="Search by name or property value" aria-label="Search features">
-        <div class="count" id="count"></div>
-        <ul class="results" id="results"></ul>
-      </div>
     </div>
   </aside>
 
   <div id="map"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
 <script>
 (function () {
   var mapEl = document.getElementById('map');
@@ -281,10 +218,14 @@
   var worldZoom = Math.log2(mapEl.clientWidth / 256);
   map.setView([22, 8], Math.max(worldZoom, 1.5));
 
-  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 19,
-    attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics'
-  }).addTo(map);
+  // OpenFreeMap vector tiles (same provider as DriveGuess). Styles: liberty, bright, positron, dark, fiord
+  var streetLayer = L.maplibreGL({
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    attribution: '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">&copy; OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
+  });
+  streetLayer.addTo(map);
+  map.zoomControl.setPosition('topright');
+  map.attributionControl.setPrefix(false);
 
   var layer = null;
   var features = [];   // { feature, leaflet, text }
@@ -292,13 +233,10 @@
     drop: document.getElementById('drop'),
     file: document.getElementById('file'),
     status: document.getElementById('status'),
-    sidebar: document.getElementById('sidebar'),
-    search: document.getElementById('search'),
-    count: document.getElementById('count'),
-    results: document.getElementById('results')
+    sidebar: document.getElementById('sidebar')
   };
 
-  var style = { color: '#ffd34d', weight: 3, opacity: 1, fillColor: '#ffd34d', fillOpacity: 0.25 };
+  var style = { color: '#7c3aed', weight: 3, opacity: 1, fillColor: '#7c3aed', fillOpacity: 0.2 };
 
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
@@ -357,13 +295,13 @@
 
     // We BUILD the GeoJSON layer so that search, popups and start/end point
     // picking keep working, but we deliberately DO NOT add it to the map. That
-    // keeps the map clean (just the satellite imagery) instead of highlighting
+    // keeps the map clean (just the base map) instead of highlighting
     // every road and building. The route you find is what gets drawn.
     var idx = 0;
     layer = L.geoJSON(fc, {
       style: function () { return style; },
       pointToLayer: function (f, latlng) {
-        return L.circleMarker(latlng, { radius: 7, color: '#fff', weight: 2, fillColor: '#ffd34d', fillOpacity: 1 });
+        return L.circleMarker(latlng, { radius: 7, color: '#fff', weight: 2, fillColor: '#7c3aed', fillOpacity: 1 });
       },
       onEachFeature: function (f, lyr) {
         var i = idx++;
@@ -383,8 +321,6 @@
 
     setStatus(fileName + ' \u2014 ' + n + (n === 1 ? ' feature' : ' features') + ' loaded.');
     els.sidebar.classList.add('loaded');
-    els.search.value = '';
-    renderResults('');
     resetPoints();
 
     // Reloading a new file replaces the old graph: clear routes + graph state.
@@ -399,47 +335,6 @@
 
     // Build the routing graph on the C++ server from the same text.
     buildGraph(rawText, fileName);
-  }
-
-  function renderResults(q) {
-    q = q.trim().toLowerCase();
-    var hits = q ? features.filter(function (x) { return x.text.indexOf(q) !== -1; }) : features;
-    els.count.textContent = q
-      ? hits.length + (hits.length === 1 ? ' match' : ' matches')
-      : features.length + (features.length === 1 ? ' feature' : ' features');
-    els.results.innerHTML = '';
-    hits.slice(0, 200).forEach(function (x) {
-      var li = document.createElement('li');
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.innerHTML = esc(x.name) + '<span class="kind">' + esc(x.kind) + '</span>';
-      btn.addEventListener('click', function () { focusFeature(x); });
-      li.appendChild(btn);
-      els.results.appendChild(li);
-    });
-    if (hits.length > 200) {
-      var more = document.createElement('li');
-      more.className = 'count';
-      more.textContent = 'Showing the first 200. Refine your search to see more.';
-      els.results.appendChild(more);
-    }
-  }
-
-  function focusFeature(x) {
-    var l = x.leaflet;
-    // The network layer is not drawn on the map, so open the feature's popup
-    // directly on the map at the right spot (centering/zooming to it) rather
-    // than calling openPopup() on an off-map layer, which would do nothing.
-    var props = x.feature && x.feature.properties;
-    if (l.getBounds && !l.getLatLng) {
-      var b = l.getBounds();
-      map.fitBounds(b, { padding: [60, 60], maxZoom: 17 });
-      map.openPopup(popupHtml(props), b.getCenter());
-    } else if (l.getLatLng) {
-      var ll = l.getLatLng();
-      map.setView(ll, Math.max(map.getZoom(), 14));
-      map.openPopup(popupHtml(props), ll);
-    }
   }
 
   // ---- Start / end point search ----
@@ -490,13 +385,14 @@
     else if (pts.start) p.textContent = 'Start point set. Now search for your end point.';
     else if (pts.end) p.textContent = 'End point set. Now search for your start point.';
     else p.textContent = 'Search for a start point and an end point.';
+    if (!graphReady) p.textContent += ' Load a road network to enable routing.';
     ['start', 'end'].forEach(function (k) { ui[k].input.classList.toggle('set', !!pts[k]); });
   }
 
   function placePin(k, ll) {
     if (pins[k]) map.removeLayer(pins[k]);
     pins[k] = L.marker(ll, {
-      icon: L.divIcon({ className: '', html: '<div class="pin ' + (k === 'start' ? 's">A' : 'e">B') + '</div>', iconSize: [30, 30], iconAnchor: [15, 15] }),
+      icon: L.divIcon({ className: '', html: '<div class="pin ' + (k === 'start' ? 's">\uD83D\uDEB6' : 'e">\uD83C\uDFC1') + '</div>', iconSize: [34, 34], iconAnchor: [17, 17] }),
       keyboard: false, zIndexOffset: 1000
     }).addTo(map);
   }
@@ -508,6 +404,7 @@
 
   function closeList(k) {
     var u = ui[k];
+    clearTimeout(geoTimer[k]); geoSeq[k]++;
     u.list.hidden = true; u.items = []; u.on = -1;
     u.input.setAttribute('aria-expanded', 'false');
   }
@@ -535,31 +432,38 @@
     if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
   }
 
-  function showSuggestions(k) {
+  // ---- Place search (Nominatim, OpenStreetMap data) ----
+  var geoCache = {};
+  var geoTimer = { start: null, end: null };
+  var geoSeq = { start: 0, end: 0 };
+
+  function clampLng(x) { return Math.max(-180, Math.min(180, x)); }
+
+  function geocode(q) {
+    if (geoCache[q]) return Promise.resolve(geoCache[q]);
+    var b = map.getBounds();
+    var url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=' + encodeURIComponent(q) +
+      '&viewbox=' + [clampLng(b.getWest()), Math.min(90, b.getNorth()), clampLng(b.getEast()), Math.max(-90, b.getSouth())].join(',');
+    return fetch(url, { headers: { 'Accept': 'application/json' } }).then(function (r) {
+      if (!r.ok) throw new Error('geocode ' + r.status);
+      return r.json();
+    }).then(function (arr) {
+      var out = arr.map(function (p) {
+        var parts = String(p.display_name).split(',');
+        return { label: p.name || parts[0].trim(), sub: p.display_name, ll: L.latLng(parseFloat(p.lat), parseFloat(p.lon)) };
+      });
+      geoCache[q] = out;
+      return out;
+    });
+  }
+
+  function renderList(k) {
     var u = ui[k];
-    var q = u.input.value.trim().toLowerCase();
-    u.items = [];
-    var coord = parseCoords(u.input.value);
-    if (coord) u.items.push({ label: fmt(coord), sub: 'Use these coordinates', ll: coord });
-
-    if (q) {
-      var hits = features.filter(function (x) { return x.text.indexOf(q) !== -1; });
-      hits.sort(function (a, b) {
-        var as = a.name.toLowerCase().indexOf(q) === 0 ? 0 : 1;
-        var bs = b.name.toLowerCase().indexOf(q) === 0 ? 0 : 1;
-        return as - bs;
-      });
-      hits.slice(0, 8).forEach(function (x) {
-        u.items.push({ label: x.name, sub: x.kind, feature: x });
-      });
-    }
-
     u.list.innerHTML = '';
-    if (!q) { closeList(k); return; }
     if (!u.items.length) {
       var li = document.createElement('li');
       li.className = 'empty';
-      li.textContent = 'No matching features.';
+      li.textContent = u.msg || 'No matches.';
       u.list.appendChild(li);
     }
     u.items.forEach(function (it, i) {
@@ -569,10 +473,53 @@
       li.addEventListener('mousedown', function (e) { e.preventDefault(); pickItem(k, i); });
       u.list.appendChild(li);
     });
-    u.on = u.items.length ? 0 : -1;
+    if (u.on >= u.items.length) u.on = u.items.length ? 0 : -1;
     u.list.hidden = false;
     u.input.setAttribute('aria-expanded', 'true');
     highlight(k);
+  }
+
+  function showSuggestions(k, immediate) {
+    var u = ui[k];
+    var raw = u.input.value;
+    var q = raw.trim().toLowerCase();
+    clearTimeout(geoTimer[k]);
+    geoSeq[k]++;
+    u.items = []; u.msg = '';
+    if (!q) { closeList(k); return; }
+
+    var coord = parseCoords(raw);
+    if (coord) u.items.push({ label: fmt(coord), sub: 'Use these coordinates', ll: coord });
+
+    var hits = features.filter(function (x) { return x.text.indexOf(q) !== -1; });
+    hits.sort(function (a, b) {
+      var as = a.name.toLowerCase().indexOf(q) === 0 ? 0 : 1;
+      var bs = b.name.toLowerCase().indexOf(q) === 0 ? 0 : 1;
+      return as - bs;
+    });
+    hits.slice(0, 5).forEach(function (x) { u.items.push({ label: x.name, sub: x.kind + ' (from file)', feature: x }); });
+
+    var wantGeo = !coord && q.length >= 3;
+    u.msg = wantGeo ? 'Searching places\u2026' : (q.length < 3 ? 'Type at least 3 characters to search places.' : 'No matches.');
+    u.on = u.items.length ? 0 : -1;
+    renderList(k);
+    if (!wantGeo) return;
+
+    var seq = geoSeq[k];
+    var run = function () {
+      geocode(q).then(function (places) {
+        if (seq !== geoSeq[k] || pts[k] || document.activeElement !== u.input) return;
+        places.forEach(function (pl) { u.items.push(pl); });
+        u.msg = 'No places found.';
+        if (u.on < 0 && u.items.length) u.on = 0;
+        renderList(k);
+      }).catch(function () {
+        if (seq !== geoSeq[k] || document.activeElement !== u.input) return;
+        u.msg = 'Place search is unavailable right now.';
+        renderList(k);
+      });
+    };
+    if (immediate || geoCache[q]) run(); else geoTimer[k] = setTimeout(run, 600);
   }
 
   function pickItem(k, i) {
@@ -593,7 +540,7 @@
     u.input.addEventListener('keydown', function (e) {
       if (e.key === 'ArrowDown' && u.items.length) { e.preventDefault(); u.on = (u.on + 1) % u.items.length; highlight(k); }
       else if (e.key === 'ArrowUp' && u.items.length) { e.preventDefault(); u.on = (u.on - 1 + u.items.length) % u.items.length; highlight(k); }
-      else if (e.key === 'Enter') { e.preventDefault(); if (u.on >= 0) pickItem(k, u.on); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (u.on >= 0) pickItem(k, u.on); else showSuggestions(k, true); }
       else if (e.key === 'Escape') { closeList(k); }
     });
   });
@@ -627,7 +574,6 @@
   }
 
   els.file.addEventListener('change', function () { readFile(els.file.files[0]); els.file.value = ''; });
-  els.search.addEventListener('input', function () { renderResults(els.search.value); });
 
   ['dragenter', 'dragover'].forEach(function (ev) {
     document.addEventListener(ev, function (e) { e.preventDefault(); els.drop.classList.add('over'); });
@@ -655,7 +601,7 @@
   var selectedRank = -1;
   var busy = false;
 
-  var ROUTE_COLORS = ['#3d8bff', '#ff8a3d', '#b36bff', '#39c57f', '#ff5fa2'];
+  var ROUTE_COLORS = ['#7c3aed', '#f97316', '#3d8bff', '#22a06b', '#ec4899'];
 
   // ---- status helper that does not clobber the loaded-file status text ----
   var baseStatus = '';
@@ -716,6 +662,7 @@
   });
 
   function updateFindEnabled() {
+    renderPrompt();
     var ready = graphReady && !!pts.start && !!pts.end && !busy;
     $('findBtn').disabled = !ready;
     $('benchBtn').disabled = !graphReady || busy;
@@ -737,7 +684,7 @@
 
   function drawSnap(point, snapped, which) {
     // small marker at the snapped node + dashed line from chosen point to it
-    var color = which === 'start' ? '#2e9e5b' : '#d9453d';
+    var color = which === 'start' ? '#f97316' : '#1f2937';
     var m = L.circleMarker([snapped.lat, snapped.lng], {
       radius: 5, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1, zIndexOffset: 900
     }).addTo(map);
@@ -962,6 +909,8 @@
       p.innerHTML = '<h2>Benchmark</h2><p class="route-note warn">Could not reach the routing server.</p>';
     });
   });
+
+  updateFindEnabled();
 
 })();
 </script>
