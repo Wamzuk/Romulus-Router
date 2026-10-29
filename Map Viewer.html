@@ -211,6 +211,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
 <script>
 (function () {
   var mapEl = document.getElementById('map');
@@ -288,9 +289,116 @@
   // Keep the raw text around so we can POST it to the C++ server unchanged.
   var lastFileText = null;
 
+  // ---- Outline of the loaded network ----
+  // Draws a glowing border around the outer edge of the data (its convex hull)
+  // and gently dims the map outside it. Set DIM_OUTSIDE to false for border only.
+  var DIM_OUTSIDE = true;
+  var outlineLayer = null;
+
+  function collectCoords(g, out) {
+    if (!g) return out;
+    if (g.type === 'GeometryCollection') { (g.geometries || []).forEach(function (x) { collectCoords(x, out); }); return out; }
+    (function walk(a) {
+      if (typeof a[0] === 'number') out.push([a[0], a[1]]);   // [lng, lat]
+      else a.forEach(walk);
+    })(g.coordinates || []);
+    return out;
+  }
+
+  // Andrew's monotone chain convex hull. Input/output are [lng, lat] pairs.
+  function convexHull(pts) {
+    pts = pts.slice().sort(function (a, b) { return a[0] - b[0] || a[1] - b[1]; });
+    var n = pts.length;
+    if (n < 3) return pts;
+    function cross(o, a, b) { return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]); }
+    var lower = [], upper = [], i;
+    for (i = 0; i < n; i++) {
+      while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], pts[i]) <= 0) lower.pop();
+      lower.push(pts[i]);
+    }
+    for (i = n - 1; i >= 0; i--) {
+      while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], pts[i]) <= 0) upper.pop();
+      upper.push(pts[i]);
+    }
+    lower.pop(); upper.pop();
+    return lower.concat(upper);
+  }
+
+  function clearOutline() {
+    if (outlineLayer) { map.removeLayer(outlineLayer); outlineLayer = null; }
+  }
+
+  // Exterior rings (as [lat, lng] lists) of any Polygon / MultiPolygon in the file,
+  // merged so overlapping polygons become one shape. Holes are ignored on purpose:
+  // we only want the outside edge.
+  function polygonRings(fc) {
+    var polys = [];
+    fc.features.forEach(function (f) {
+      (function walk(g) {
+        if (!g) return;
+        if (g.type === 'Polygon') polys.push(g.coordinates);
+        else if (g.type === 'MultiPolygon') g.coordinates.forEach(function (c) { polys.push(c); });
+        else if (g.type === 'GeometryCollection') (g.geometries || []).forEach(walk);
+      })(f && f.geometry);
+    });
+    if (!polys.length) return null;
+
+    var outers = polys.map(function (c) { return [c[0]]; });   // exterior ring only
+    var exteriors = null;
+    // Merging is only worth it for a modest number of polygons.
+    if (outers.length > 1 && outers.length <= 200 && window.turf) {
+      try {
+        var merged = turf.polygon(outers[0]);
+        for (var i = 1; i < outers.length; i++) merged = turf.union(merged, turf.polygon(outers[i])) || merged;
+        var g = merged.geometry;
+        exteriors = (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).map(function (c) { return c[0]; });
+      } catch (e) { exteriors = null; }
+    }
+    if (!exteriors) exteriors = outers.map(function (c) { return c[0]; });
+    return exteriors.map(function (r) { return r.map(function (c) { return [c[1], c[0]]; }); });
+  }
+
+  function drawOutline(fc, bounds) {
+    clearOutline();
+    var rings = polygonRings(fc);
+
+    if (!rings) {
+      // No polygons in the file (e.g. just roads): use the convex hull of every point.
+      var coords = [];
+      fc.features.forEach(function (f) { collectCoords(f && f.geometry, coords); });
+      if (!coords.length) return;
+      var hull = convexHull(coords);
+      if (hull.length >= 3) {
+        rings = [hull.map(function (c) { return [c[1], c[0]]; })];
+      } else {
+        var bb = bounds.pad(0.05);
+        if (bb.getNorth() === bb.getSouth() || bb.getEast() === bb.getWest()) bb = L.latLngBounds(
+          [bb.getSouth() - 0.0005, bb.getWest() - 0.0005], [bb.getNorth() + 0.0005, bb.getEast() + 0.0005]);
+        rings = [[bb.getSouthWest(), bb.getNorthWest(), bb.getNorthEast(), bb.getSouthEast()]];
+      }
+    }
+
+    outlineLayer = L.layerGroup();
+
+    if (DIM_OUTSIDE) {
+      var world = [[-85, -720], [-85, 720], [85, 720], [85, -720]];
+      // World rectangle with a hole cut out for each outline.
+      L.polygon([world].concat(rings), {
+        stroke: false, fillColor: '#2d2150', fillOpacity: 0.28, interactive: false
+      }).addTo(outlineLayer);
+    }
+
+    // Soft glow under a crisp line.
+    L.polygon(rings, { color: '#7c3aed', weight: 12, opacity: 0.18, fill: false, interactive: false, lineJoin: 'round' }).addTo(outlineLayer);
+    L.polygon(rings, { color: '#7c3aed', weight: 3.5, opacity: 1, fill: false, interactive: false, lineJoin: 'round' }).addTo(outlineLayer);
+
+    outlineLayer.addTo(map);
+  }
+
   function load(data, fileName, rawText) {
     var fc = normalize(data);
     if (layer) { map.removeLayer(layer); layer = null; }
+    clearOutline();
     features = [];
 
     // We BUILD the GeoJSON layer so that search, popups and start/end point
@@ -318,6 +426,7 @@
     // Fit the view to where the data is, even though we are not drawing it.
     var b = layer.getBounds();
     if (b.isValid()) map.fitBounds(b, { padding: [40, 40], maxZoom: 16 });
+    if (b.isValid()) drawOutline(fc, b);
 
     setStatus(fileName + ' \u2014 ' + n + (n === 1 ? ' feature' : ' features') + ' loaded.');
     els.sidebar.classList.add('loaded');
