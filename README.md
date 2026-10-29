@@ -10,7 +10,6 @@ A map-based route finder that works with any road network you give it. Load a Ge
 |---|---|
 | `Map Viewer.html` | The web page: map, place search, road-network upload, boundary outline, and the route and benchmark controls. |
 | `uri_roads_places_boundary.geojson` | Sample data for the University of Rhode Island campus: 265 drivable roads, 217 named places, and the campus boundary polygon (483 features). Converted from Overture Maps, release `2026-10-21.0`. Upload it as the road network to try the router. |
-| `uri_roads_and_places.geojson` | The same sample without the boundary polygon (482 features). With this file the page outlines the data with a simple convex hull instead (see below). |
 
 Not written yet: the C++ server, its build file, and the libraries it will use.
 
