@@ -17,9 +17,9 @@
     --strong: #2d2150;
     --muted: #8a84a3;
     --line: rgba(124,58,237,.14);
-    --accent: #7c3aed;
+    --accent: #d91818;
     --accent-soft: rgba(124,58,237,.09);
-    --grad: linear-gradient(180deg, #9b5de5 0%, #6d35d6 100%);
+    --grad: linear-gradient(180deg, #ffaa00 0%, #b77005 100%);
     --field: rgba(255,255,255,.95);
     --field-line: #ddd6fe;
   }
@@ -57,10 +57,9 @@
   .pt .lbl { font-size: 14px; color: var(--muted); }
   .pt .val { font-size: 16px; color: var(--strong); overflow-wrap: anywhere; }
   .pt.active .lbl { color: var(--accent); }
-  .badge { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 14px; color: #fff; border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.2); }
-  .badge.s { background: #f97316; }
-  .badge.e { background: #1f2937; }
-
+  .badge { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 14px; color: #6d28d9; border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0,0,0,.2); }
+  .badge.s { background: #fefe00; }
+  .badge.e { background: repeating-conic-gradient(#000 0% 25%, #fff 0% 50%) 50% / 8px 8px; color: red; }
   .btn { font: inherit; font-size: 15px; font-weight: 700; padding: 9px 16px; border-radius: 14px; border: 1px solid var(--field-line); background: #fff; color: var(--accent); cursor: pointer; transition: transform .1s, box-shadow .15s; }
   .btn:hover, .btn:focus-visible { border-color: var(--accent); outline: none; }
   .btn:disabled { opacity: .45; cursor: not-allowed; }
@@ -124,7 +123,7 @@
   .spin { display: inline-block; }
 
 
-  /* Leaflet controls, DriveGuess style */
+  /* Leaflet controls */
   .leaflet-container { font-family: inherit; }
   .leaflet-top.leaflet-right .leaflet-control { margin: 16px 16px 0 0; }
   .leaflet-bar { border: 0 !important; border-radius: 999px !important; overflow: hidden; background: var(--glass); backdrop-filter: blur(14px); box-shadow: 0 6px 24px rgba(76,29,149,.18) !important; }
@@ -148,7 +147,7 @@
 </style>
 </head>
 <body>
-  <div class="toppill"><h1>Romulus Router</h1><small>Route finder</small></div>
+  <div class="toppill"><h1>Romulus Router</h1><small></small></div>
 
   <aside id="sidebar">
     <div class="head">
@@ -156,8 +155,7 @@
     </div>
 
     <label class="drop" id="drop">
-      <strong>Load road network (GeoJSON)</strong>
-      <span>or drag it here (.geojson or .json)</span>
+      <strong>Load road network (.geojson)</strong>
       <input type="file" id="file" accept=".geojson,.json,application/geo+json,application/json">
     </label>
 
@@ -167,18 +165,18 @@
       <div class="route-wrap" id="route">
         <p class="prompt" id="prompt"></p>
         <div class="field" id="startField">
-          <span class="badge s">A</span>
+          <span class="badge s"></span>
           <div class="info">
             <label class="lbl" for="startInput">Start point</label>
-            <input type="search" id="startInput" class="pt-input" placeholder="Search a feature or lat, lng" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="startList">
+            <input type="search" id="startInput" class="pt-input" placeholder="Search for a building" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="startList">
             <ul class="suggest" id="startList" role="listbox" hidden></ul>
           </div>
         </div>
         <div class="field" id="endField">
-          <span class="badge e">B</span>
+          <span class="badge e"></span>
           <div class="info">
             <label class="lbl" for="endInput">End point</label>
-            <input type="search" id="endInput" class="pt-input" placeholder="Search a feature or lat, lng" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="endList">
+            <input type="search" id="endInput" class="pt-input" placeholder="Search for a building" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="endList">
             <ul class="suggest" id="endList" role="listbox" hidden></ul>
           </div>
         </div>
@@ -219,7 +217,7 @@
   var worldZoom = Math.log2(mapEl.clientWidth / 256);
   map.setView([22, 8], Math.max(worldZoom, 1.5));
 
-  // OpenFreeMap vector tiles (same provider as DriveGuess). Styles: liberty, bright, positron, dark, fiord
+  // OpenFreeMap vector tiles. Styles: liberty, bright, positron, dark, fiord
   var streetLayer = L.maplibreGL({
     style: 'https://tiles.openfreemap.org/styles/liberty',
     attribution: '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">&copy; OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
@@ -500,7 +498,6 @@
     else if (pts.start) p.textContent = 'Start point set. Now search for your end point.';
     else if (pts.end) p.textContent = 'End point set. Now search for your start point.';
     else p.textContent = 'Search for a start point and an end point.';
-    if (!graphReady) p.textContent += ' Load a road network to enable routing.';
     ['start', 'end'].forEach(function (k) { ui[k].input.classList.toggle('set', !!pts[k]); });
   }
 
