@@ -1,6 +1,6 @@
 # Romulus Router
 
-A map-based route finder for the University of Rhode Island area. The web page lets you search for a start and end point, load a road network (GeoJSON), and find routes. A C++ server will do the nearest-road search (k-d tree vs. brute force) and the route finding.
+A map-based route finder that works with any road network you give it. Load a GeoJSON file of roads, pick a start and end point on the map, and the router finds routes between them. A C++ server will do the nearest-road search (k-d tree vs. brute force) and the route finding.
 
 > **Status: work in progress.** The web page is done. The C++ server is not written yet, so finding routes and running the benchmark do not work yet.
 
