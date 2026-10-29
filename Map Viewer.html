@@ -152,7 +152,7 @@
 
   <aside id="sidebar">
     <div class="head">
-      <p class="intro">Search any place or building to set your start and end points. Load a road-network GeoJSON file to find routes.</p>
+      <p class="intro">Search features in your uploaded GeoJSON file to set your start and end points.</p>
     </div>
 
     <label class="drop" id="drop">
@@ -161,7 +161,7 @@
       <input type="file" id="file" accept=".geojson,.json,application/geo+json,application/json">
     </label>
 
-    <div class="status" id="status" role="status">No road network loaded yet. You can already search for places.</div>
+    <div class="status" id="status" role="status">Load a GeoJSON file to search within it.</div>
 
     <div class="panel">
       <div class="route-wrap" id="route">
@@ -170,7 +170,7 @@
           <span class="badge s">A</span>
           <div class="info">
             <label class="lbl" for="startInput">Start point</label>
-            <input type="search" id="startInput" class="pt-input" placeholder="Search a place, building, or lat, lng" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="startList">
+            <input type="search" id="startInput" class="pt-input" placeholder="Search a feature or lat, lng" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="startList">
             <ul class="suggest" id="startList" role="listbox" hidden></ul>
           </div>
         </div>
@@ -178,7 +178,7 @@
           <span class="badge e">B</span>
           <div class="info">
             <label class="lbl" for="endInput">End point</label>
-            <input type="search" id="endInput" class="pt-input" placeholder="Search a place, building, or lat, lng" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="endList">
+            <input type="search" id="endInput" class="pt-input" placeholder="Search a feature or lat, lng" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="endList">
             <ul class="suggest" id="endList" role="listbox" hidden></ul>
           </div>
         </div>
@@ -229,6 +229,7 @@
   map.attributionControl.setPrefix(false);
 
   var layer = null;
+  var dataBounds = null;
   var features = [];   // { feature, leaflet, text }
   var els = {
     drop: document.getElementById('drop'),
@@ -400,6 +401,7 @@
     if (layer) { map.removeLayer(layer); layer = null; }
     clearOutline();
     features = [];
+    dataBounds = null;
 
     // We BUILD the GeoJSON layer so that search, popups and start/end point
     // picking keep working, but we deliberately DO NOT add it to the map. That
@@ -425,8 +427,11 @@
 
     // Fit the view to where the data is, even though we are not drawing it.
     var b = layer.getBounds();
-    if (b.isValid()) map.fitBounds(b, { padding: [40, 40], maxZoom: 16 });
-    if (b.isValid()) drawOutline(fc, b);
+    if (b.isValid()) {
+      dataBounds = b;
+      map.fitBounds(b, { padding: [40, 40], maxZoom: 16 });
+      drawOutline(fc, b);
+    }
 
     setStatus(fileName + ' \u2014 ' + n + (n === 1 ? ' feature' : ' features') + ' loaded.');
     els.sidebar.classList.add('loaded');
@@ -484,7 +489,8 @@
     if (!m) return null;
     var lat = parseFloat(m[1]), lng = parseFloat(m[2]);
     if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
-    return L.latLng(lat, lng);
+    var point = L.latLng(lat, lng);
+    return dataBounds && dataBounds.contains(point) ? point : null;
   }
 
   function renderPrompt() {
@@ -513,7 +519,6 @@
 
   function closeList(k) {
     var u = ui[k];
-    clearTimeout(geoTimer[k]); geoSeq[k]++;
     u.list.hidden = true; u.items = []; u.on = -1;
     u.input.setAttribute('aria-expanded', 'false');
   }
@@ -541,31 +546,6 @@
     if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
   }
 
-  // ---- Place search (Nominatim, OpenStreetMap data) ----
-  var geoCache = {};
-  var geoTimer = { start: null, end: null };
-  var geoSeq = { start: 0, end: 0 };
-
-  function clampLng(x) { return Math.max(-180, Math.min(180, x)); }
-
-  function geocode(q) {
-    if (geoCache[q]) return Promise.resolve(geoCache[q]);
-    var b = map.getBounds();
-    var url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=' + encodeURIComponent(q) +
-      '&viewbox=' + [clampLng(b.getWest()), Math.min(90, b.getNorth()), clampLng(b.getEast()), Math.max(-90, b.getSouth())].join(',');
-    return fetch(url, { headers: { 'Accept': 'application/json' } }).then(function (r) {
-      if (!r.ok) throw new Error('geocode ' + r.status);
-      return r.json();
-    }).then(function (arr) {
-      var out = arr.map(function (p) {
-        var parts = String(p.display_name).split(',');
-        return { label: p.name || parts[0].trim(), sub: p.display_name, ll: L.latLng(parseFloat(p.lat), parseFloat(p.lon)) };
-      });
-      geoCache[q] = out;
-      return out;
-    });
-  }
-
   function renderList(k) {
     var u = ui[k];
     u.list.innerHTML = '';
@@ -588,14 +568,18 @@
     highlight(k);
   }
 
-  function showSuggestions(k, immediate) {
+  function showSuggestions(k) {
     var u = ui[k];
     var raw = u.input.value;
     var q = raw.trim().toLowerCase();
-    clearTimeout(geoTimer[k]);
-    geoSeq[k]++;
     u.items = []; u.msg = '';
     if (!q) { closeList(k); return; }
+    if (!layer || !dataBounds) {
+      u.msg = 'Load a GeoJSON file before searching.';
+      u.on = -1;
+      renderList(k);
+      return;
+    }
 
     var coord = parseCoords(raw);
     if (coord) u.items.push({ label: fmt(coord), sub: 'Use these coordinates', ll: coord });
@@ -608,27 +592,9 @@
     });
     hits.slice(0, 5).forEach(function (x) { u.items.push({ label: x.name, sub: x.kind + ' (from file)', feature: x }); });
 
-    var wantGeo = !coord && q.length >= 3;
-    u.msg = wantGeo ? 'Searching places\u2026' : (q.length < 3 ? 'Type at least 3 characters to search places.' : 'No matches.');
+    u.msg = q.length < 3 ? 'Type at least 3 characters to search the file.' : 'No matches in the uploaded file.';
     u.on = u.items.length ? 0 : -1;
     renderList(k);
-    if (!wantGeo) return;
-
-    var seq = geoSeq[k];
-    var run = function () {
-      geocode(q).then(function (places) {
-        if (seq !== geoSeq[k] || pts[k] || document.activeElement !== u.input) return;
-        places.forEach(function (pl) { u.items.push(pl); });
-        u.msg = 'No places found.';
-        if (u.on < 0 && u.items.length) u.on = 0;
-        renderList(k);
-      }).catch(function () {
-        if (seq !== geoSeq[k] || document.activeElement !== u.input) return;
-        u.msg = 'Place search is unavailable right now.';
-        renderList(k);
-      });
-    };
-    if (immediate || geoCache[q]) run(); else geoTimer[k] = setTimeout(run, 600);
   }
 
   function pickItem(k, i) {
