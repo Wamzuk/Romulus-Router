@@ -88,7 +88,7 @@
   .suggest li.empty:hover { background: none; }
 
   .method { margin: 4px 0 16px; }
-  .method .lbl { display: block; margin-bottom: 8px; font-size: 14px; font-weight: 600; color: var(--muted); }
+  .method .lbl { display: block; margin-bottom: 8px; text-align: center;}
   .seg { display: flex; padding: 4px; gap: 4px; background: var(--accent-soft); border-radius: 14px; }
   .seg button { flex: 1; padding: 8px 6px; font: inherit; font-size: 14px; font-weight: 700; background: none; color: var(--accent); border: 0; border-radius: 11px; cursor: pointer; }
   .seg button.on { background: var(--grad); color: #fff; box-shadow: 0 3px 10px rgba(109,53,214,.35); }
@@ -152,7 +152,7 @@
 
   <aside id="sidebar">
     <div class="head">
-      <p class="intro">Search features in your uploaded GeoJSON file to set your start and end points.</p>
+      
     </div>
 
     <label class="drop" id="drop">
@@ -186,11 +186,11 @@
 
         <!-- Snapping method control (added) -->
         <div class="method">
-          <span class="lbl">Snapping method</span>
+          <span class="lbl">Data Structure</span>
           <div class="seg" id="methodSeg" role="group" aria-label="Snapping method">
-            <button type="button" data-method="kdtree" class="on">k-d tree</button>
-            <button type="button" data-method="brute">Brute force</button>
-            <button type="button" data-method="both">Compare both</button>
+            <button type="button" data-method="kdtree" class="on">K-d tree</button>
+            <button type="button" data-method="brute">Alternative</button>
+            <button type="button" data-method="both">Compare</button>
           </div>
         </div>
 
