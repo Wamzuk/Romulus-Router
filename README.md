@@ -9,16 +9,14 @@ A map-based route finder that works with any road network you give it. Load a Ge
 | File | What it is |
 |---|---|
 | `Map_Viewer.html` | The web page: map, place search, road-network upload, and the route and benchmark controls. |
-| `uri_roads.geojson` | Drivable roads around the URI campus, converted from Overture Maps (265 roads). |
-| `uri_roads_and_places.geojson` | The same roads plus 217 named places (482 features in total). |
 
-Not written yet: the C++ server, its build file, and the libraries it will use.
+Not written yet: the C++ server, its build file, and the libraries it will use. Road data files are not included yet (see "Getting the road data" below).
 
 ## The web page (`Map_Viewer.html`)
 
 - **Map:** OpenFreeMap vector tiles (the "liberty" style), drawn with MapLibre GL through the Leaflet plugin.
 - **Place search:** type at least 3 characters in the Start or End box. Suggestions come from [Nominatim](https://nominatim.openstreetmap.org/) (OpenStreetMap's place search), so you do not need to load a file to search. You can also type `lat, lng` coordinates.
-- **Road network:** use "Load road network (GeoJSON)" to upload one of the road files. The page sends it to the server at `/api/graph`.
+- **Road network:** use "Load road network (GeoJSON)" to upload a road file. The page sends it to the server at `/api/graph`.
 - **Routing and benchmark:** the page calls `/api/route` and `/api/benchmark`. These need the C++ server.
 - **Internet needed:** the map tiles, place search, and the Leaflet and MapLibre libraries all load from the internet.
 
@@ -26,12 +24,12 @@ The page has to be opened through the server (for example `http://localhost:8080
 
 ## Getting the road data
 
-The road files come from [Overture Maps](https://overturemaps.org/) (release `2026-10-21.0`).
+One source of road data is [Overture Maps](https://overturemaps.org/).
 
 ### Option 1: Overture Explorer (no install)
 
 1. Go to <https://explore.overturemaps.org/>.
-2. Pan and zoom to the area you want. Keep it small (the URI test area was about 1.5 km wide).
+2. Pan and zoom to the area you want. Keep it small, since the server will have to load all of it.
 3. Turn on only the layers you need. For roads, that is the transportation layer (`segment`). For named places, add `place`.
 4. Use **Download Visible**. You get one GeoJSON file per layer, plus a `metadata.json` that records the box and release.
 
@@ -42,9 +40,9 @@ pip install overturemaps
 overturemaps download --bbox=WEST,SOUTH,EAST,NORTH -f geojson --type=segment -o segments.geojson
 ```
 
-`--type=place` downloads places. The URI test area used the box `-71.539,41.483,-71.519,41.493`.
+`--type=place` downloads places. `WEST,SOUTH,EAST,NORTH` is the box around your area.
 
-### Converting to the files used here
+### Converting for routing
 
 The raw Overture `segment` file is not ready to use for routing, so it was converted:
 
@@ -60,9 +58,9 @@ The raw Overture `segment` file is not ready to use for routing, so it was conve
 | `oneway` | `"yes"` when you can only drive in the direction the line is drawn. |
 | `overture_id` | The road's Overture ID. |
 
-- **Places** (in `uri_roads_and_places.geojson` only) are points with `name`, `kind`, and, when known, `category` and `address`.
+- **Places** (optional, if you also download them) are points with `name`, `kind`, and, when known, `category` and `address`.
 
-Only 8 of the 265 roads have a speed limit and 14 are one-way, so travel time falls back to distance for most roads. The conversion script is not in the repo yet. *(To add.)*
+Many roads have no speed limit in the data, so travel time may fall back to distance for those roads. The conversion script is not in the repo yet. *(To add.)*
 
 ## Credits and licenses
 
