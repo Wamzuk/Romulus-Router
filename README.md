@@ -1,6 +1,6 @@
 # Romulus Router
 
-A map-based route finder that works with any road network you give it. Load a GeoJSON file of roads, pick a start and end point on the map, and the router finds routes between them. A C++ server will do the nearest-road search (k-d tree vs. brute force) and the route finding.
+A map-based route finder that works with any road network you give it. Load a GeoJSON file of roads/buildings pick a start and end point on the map, and the router finds routes between them. A C++ server will do the nearest-road search (k-d tree vs. brute force) and the route finding.
 
 > **Status: work in progress.** The web page is done. The C++ server is not written yet, so finding routes and running the benchmark do not work yet.
 
@@ -9,7 +9,7 @@ A map-based route finder that works with any road network you give it. Load a Ge
 | File | What it is |
 |---|---|
 | `Map Viewer.html` | The web page: map, place search, road-network upload, boundary outline, and the route and benchmark controls. |
-| `uri_roads_places_boundary.geojson` | Sample data for the University of Rhode Island campus: 265 drivable roads, 217 named places, and the campus boundary polygon (483 features). Converted from Overture Maps, release `2026-10-21.0`. Upload it as the road network to try the router. |
+| `uri_roads_paths_places_boundary.geojson` | Sample data for the University of Rhode Island campus: 265 drivable roads, 217 named places, and the campus boundary polygon (483 features). Converted from Overture Maps, release `2026-10-21.0`. Upload it as the road network to try the router. |
 
 Not written yet: the C++ server, its build file, and the libraries it will use.
 
