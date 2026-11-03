@@ -215,7 +215,7 @@ Map Viewer.html                      the web page
 uri_roads_places_boundary.geojson    sample data: URI campus
 server/
   main.cpp                           the server: endpoints, routing, benchmark
-  graph.hpp                          road graph, k-d tree, brute force, Dijkstra
+  graph.hpp                          road graph, k-d tree, brute force, routing
   geo.hpp                            distance and speed helper functions
   json.hpp                           a small built-in JSON reader/writer
   http.hpp                           a small built-in web server
@@ -235,7 +235,7 @@ In plain words: when you upload roads, the server turns them into a **graph**, w
 | **Graph builder** | Turns the uploaded GeoJSON into a routing graph. Each `LineString` vertex becomes a node (endpoints that coincide are merged into one intersection); consecutive vertices become edges. Edge length is the great-circle (haversine) distance. Travel time uses the road's `maxspeed`, falling back to a default speed for its road class. `oneway: yes` roads get a single directed edge. Polygons and points are ignored for routing. |
 | **k-d tree** | A balanced 2-D k-d tree over the nodes (built once and timed). It finds the nearest node in O(log n) time on average, which is how a clicked point is snapped onto the network. |
 | **Brute force** | The O(n) baseline: check every node. It always returns the same node as the k-d tree, so the two can be compared directly. |
-| **Routing** | Dijkstra's algorithm over travel time finds the fastest route. Alternatives come from re-running it with the previous route's edges penalised, then removing duplicates and ranking the results. |
+| **Routing** | The route search over travel time finds the fastest route. Alternatives come from re-running it with the previous route's edges penalised, then removing duplicates and ranking the results. |
 | **Benchmark** | Runs many random nearest-node queries through both methods, reports total and average time and the speedup, and confirms the two methods agree on every query. |
 
 The page does all the drawing. Every graph, k-d tree, snapping, routing and timing calculation happens in C++, so the comparison is measured fairly.
@@ -269,7 +269,6 @@ You don't need this to use the project. It is here for anyone who wants to call 
 | **Snapping** | Moving the spot you clicked to the nearest point on the road network. |
 | **k-d tree** | A data structure that splits points into regions so the nearest one can be found without checking all of them. |
 | **Brute force** | Checking every possibility one by one. Simple, but slow on large data. |
-| **Dijkstra's algorithm** | A classic way to find the cheapest path through a graph. Here "cheapest" means shortest travel time. |
 | **Haversine distance** | The distance between two latitude/longitude points over the Earth's surface. |
 | **Benchmark** | A timing test: run the same work many times and measure how long it takes. |
 

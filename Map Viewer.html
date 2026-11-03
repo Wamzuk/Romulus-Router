@@ -826,7 +826,7 @@
   var selectedRank = -1;
   var busy = false;
 
-  var ROUTE_COLORS = ['#7c3aed', '#f97316', '#3d8bff', '#22a06b', '#ec4899'];
+  var ROUTE_COLORS = ['#ff0000', '#ffa500', '#008000', '#22a06b', '#ec4899'];
 
   // ---- status helper that does not clobber the loaded-file status text ----
   var baseStatus = '';
@@ -1227,7 +1227,7 @@
         chartBox('chLookup', 'Lookup time for your route', 'Average time to snap one point to the nearest node, measured over 1,000 repeats of your actual start/end.') +
         chartBox('chBench', 'Lookup time on random points', 'Average per query over many random points across the whole map. Less affected by one lucky or unlucky spot.') +
         chartBox('chScale', 'Total time as queries grow', 'Time to answer N queries. A flatter line means the method scales better.') +
-        chartBox('chShare', 'Where the route time goes', 'Time to find your route, split into nearest-node lookup and the route search (Dijkstra).') +
+        chartBox('chShare', 'Where the route time goes', 'Time to find your route, split into nearest-node lookup and the shared route search.') +
       '</div>' +
       '<div class="cmp-explain" id="cmpExplain"></div>';
     $('cmpClose').addEventListener('click', closeCompare);
@@ -1326,7 +1326,7 @@
       '<ul>' +
       '<li><b>Why the gap grows:</b> brute force checks all ' + nodes.toLocaleString() + ' nodes for every query, so doubling the map roughly doubles its time. The k-d tree adds about one extra comparison level when the map doubles. That is why the brute-force line in the scaling chart climbs faster.</li>' +
       (breakEven ? '<li><b>Is the setup worth it?</b> The tree costs ' + fmtMs(build) + ' to build and saves about ' + fmtMicros(saved) + ' per query, so it pays for itself after roughly <b>' + breakEven.toLocaleString() + ' queries</b>. For a router that answers many requests, that happens quickly.</li>' : '') +
-      '<li><b>Why finding one route feels the same:</b> the route search (Dijkstra) is identical for both and takes far longer than either lookup, so a single route is not noticeably faster. The k-d tree matters when you do many lookups or use a much larger road network.</li>' +
+      '<li><b>Why finding one route feels the same:</b> the route search is identical for both and takes far longer than either lookup, so a single route is not noticeably faster. The k-d tree matters when you do many lookups or use a much larger road network.</li>' +
       '<li><b>Bottom line:</b> ' + (winner === 'k-d tree'
           ? 'use the k-d tree. It returns the same answers, scales much better, and the one-time build cost is small.'
           : winner === 'Brute force'
