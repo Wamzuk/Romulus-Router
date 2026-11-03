@@ -22,8 +22,6 @@
 #include <cmath>
 #include <stdexcept>
 #include <functional>
-#include <map>
-#include <cctype>
 
 struct Node {
     double lat;
@@ -46,19 +44,16 @@ struct NearestResult {
 };
 
 // ----------------------------------------------------------------------------
-// k-d tree over projected coordinates (2-D: x, y).
-// Generic: P is any point type with public double members px and py (Node, Place).
-// All per-query search state is local, so concurrent queries are thread-safe.
+// k-d tree over node projected coordinates (2-D: x, y).
 // ----------------------------------------------------------------------------
-template <typename P>
 class KdTree {
 public:
-    void build(const std::vector<P>& pts) {
-        pts_ = &pts;
-        idx_.resize(pts.size());
-        for (size_t i = 0; i < pts.size(); i++) idx_[i] = static_cast<int>(i);
-        tree_.assign(pts.size(), KdNode{});
-        if (!pts.empty()) {
+    void build(const std::vector<Node>& nodes) {
+        nodes_ = &nodes;
+        idx_.resize(nodes.size());
+        for (size_t i = 0; i < nodes.size(); i++) idx_[i] = static_cast<int>(i);
+        tree_.assign(nodes.size(), KdNode{});
+        if (!nodes.empty()) {
             size_t pos = 0;
             root_ = buildRec(0, idx_.size(), 0, pos);
         } else {
@@ -66,35 +61,28 @@ public:
         }
     }
 
-    // Nearest point to a projected query point (qx, qy). Returns point index.
+    // Nearest node to a projected query point (qx, qy). Returns node index.
     int nearest(double qx, double qy) const {
-        return nearestIf(qx, qy, [](int) { return true; });
-    }
-
-    // Nearest point for which accept(pointIndex) is true (e.g. "name contains
-    // the user's search text"). Subtrees are still pruned by distance, so this
-    // stays much faster than a full scan; non-matching points are simply never
-    // allowed to become the "best so far".
-    template <typename Accept>
-    int nearestIf(double qx, double qy, const Accept& accept) const {
         if (root_ < 0) return -1;
+        // Search state is local (not shared members) so concurrent requests
+        // from different connection threads cannot corrupt each other.
         int best = -1;
         double bestD2 = std::numeric_limits<double>::infinity();
-        searchRec(root_, qx, qy, 0, best, bestD2, accept);
+        searchRec(root_, qx, qy, 0, best, bestD2);
         return best;
     }
 
 private:
     struct KdNode { int point = -1; int left = -1; int right = -1; };
 
-    const std::vector<P>* pts_ = nullptr;
+    const std::vector<Node>* nodes_ = nullptr;
     std::vector<int> idx_;
     std::vector<KdNode> tree_;
     int root_ = -1;
 
-    double coord(int i, int axis) const {
-        const P& p = (*pts_)[i];
-        return axis == 0 ? p.px : p.py;
+    double coord(int nodeIndex, int axis) const {
+        const Node& n = (*nodes_)[nodeIndex];
+        return axis == 0 ? n.px : n.py;
     }
 
     // Build recursively by alternating the split axis and using nth_element
@@ -113,43 +101,25 @@ private:
         return self;
     }
 
-    template <typename Accept>
-    void searchRec(int node, double qx, double qy, int depth,
-                   int& best, double& bestD2, const Accept& accept) const {
+    void searchRec(int node, double qx, double qy, int depth, int& best, double& bestD2) const {
         if (node < 0) return;
         const KdNode& kn = tree_[node];
         int p = kn.point;
-        double dx = (*pts_)[p].px - qx;
-        double dy = (*pts_)[p].py - qy;
+        double dx = (*nodes_)[p].px - qx;
+        double dy = (*nodes_)[p].py - qy;
         double d2 = dx * dx + dy * dy;
-        if (d2 < bestD2 && accept(p)) { bestD2 = d2; best = p; }
+        if (d2 < bestD2) { bestD2 = d2; best = p; }
 
         int axis = depth % 2;
-        double diff = (axis == 0 ? qx - (*pts_)[p].px : qy - (*pts_)[p].py);
+        double diff = (axis == 0 ? qx - (*nodes_)[p].px : qy - (*nodes_)[p].py);
         int nearNode = diff < 0 ? kn.left : kn.right;
         int farNode = diff < 0 ? kn.right : kn.left;
 
-        searchRec(nearNode, qx, qy, depth + 1, best, bestD2, accept);
+        searchRec(nearNode, qx, qy, depth + 1, best, bestD2);
         // Only cross to the far side if the splitting plane is closer than the
         // best distance found so far -- this pruning is what makes it fast.
-        if (diff * diff < bestD2) searchRec(farNode, qx, qy, depth + 1, best, bestD2, accept);
+        if (diff * diff < bestD2) searchRec(farNode, qx, qy, depth + 1, best, bestD2);
     }
-};
-
-// A point of interest (a GeoJSON Point feature): any named place on the map.
-struct Place {
-    std::string name;
-    std::string address;
-    std::string searchText;   // lower-cased "name address", matched against the user's search
-    double lat = 0, lng = 0;
-    double px = 0, py = 0;    // projected coordinates (same projection as Node)
-};
-
-// Result of a nearest-place query.
-struct NearestPlaceResult {
-    int placeIndex = -1;       // index into Graph::places
-    double distMeters = 0.0;   // true haversine distance
-    const Place* place = nullptr;
 };
 
 // ----------------------------------------------------------------------------
@@ -159,9 +129,7 @@ class Graph {
 public:
     std::vector<Node> nodes;
     std::vector<std::vector<Edge>> adj; // adjacency list, parallel to nodes
-    KdTree<Node> kdtree;
-    std::vector<Place> places;     // every Point feature in the file
-    KdTree<Place> placeTree;       // one k-d tree over all places
+    KdTree kdtree;
     geo::Projector projector;
     double kdTreeBuildMs = 0.0;
     bool speedInfoFound = false; // true if any road carried an explicit maxspeed
@@ -182,7 +150,6 @@ public:
         totalEdges_ = 0;
         warnings.clear();
         speedInfoFound = false;
-        places.clear();
 
         const json::Value* feats = geojson.find("features");
         std::vector<const json::Value*> featureList;
@@ -237,9 +204,7 @@ public:
                 }
             } else if (gtype == "Polygon" || gtype == "MultiPolygon") {
                 polyIgnored++;
-            } else if (gtype == "Point") {
-                addPlace(geom, props);
-            } else if (gtype == "MultiPoint") {
+            } else if (gtype == "Point" || gtype == "MultiPoint") {
                 pointIgnored++;
             }
         }
@@ -261,18 +226,7 @@ public:
         kdtree.build(nodes);
         auto t1 = std::chrono::high_resolution_clock::now();
         kdTreeBuildMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
-
-        // Build the k-d tree over all places (searched with a text filter).
-        placeTree.build(places);
-        if (!places.empty()) {
-            warnings.push_back("Loaded " + std::to_string(places.size()) + " searchable places.");
-        }
-        if (pointIgnored > 0) {
-            warnings.push_back("Ignored " + std::to_string(pointIgnored) + " MultiPoint feature(s).");
-        }
     }
-
-    size_t placeCount() const { return places.size(); }
 
     // -- nearest-node search, two ways (they must always agree) --
     NearestResult nearestKd(double lat, double lng) const {
@@ -292,59 +246,6 @@ public:
             if (d2 < bestD2) { bestD2 = d2; best = static_cast<int>(i); }
         }
         return makeResult(best, lat, lng);
-    }
-
-    // -- free-text place search --
-    // The query is split on whitespace; a place matches when its name/address
-    // contains EVERY term (case-insensitive). "coffee" matches "Bru Coffee Bar";
-    // "dining hall" matches "Mainfare Dining Hall".
-    static std::vector<std::string> parseTerms(const std::string& query) {
-        std::vector<std::string> terms;
-        std::string cur;
-        for (char ch : query) {
-            if (std::isspace((unsigned char)ch)) {
-                if (!cur.empty()) { terms.push_back(cur); cur.clear(); }
-            } else {
-                cur += (char)std::tolower((unsigned char)ch);
-            }
-        }
-        if (!cur.empty()) terms.push_back(cur);
-        return terms;
-    }
-
-    static bool matchesTerms(const Place& p, const std::vector<std::string>& terms) {
-        for (auto& t : terms)
-            if (p.searchText.find(t) == std::string::npos) return false;
-        return true;
-    }
-
-    size_t countMatches(const std::string& query) const {
-        auto terms = parseTerms(query);
-        size_t n = 0;
-        for (auto& p : places) if (matchesTerms(p, terms)) n++;
-        return n;
-    }
-
-    // -- nearest-place search, two ways (they must always agree) --
-    NearestPlaceResult nearestPlaceKd(const std::string& query, double lat, double lng) const {
-        auto terms = parseTerms(query);
-        int id = placeTree.nearestIf(projector.x(lng), projector.y(lat),
-            [&](int i) { return matchesTerms(places[i], terms); });
-        return makePlaceResult(id, lat, lng);
-    }
-
-    NearestPlaceResult nearestPlaceBrute(const std::string& query, double lat, double lng) const {
-        auto terms = parseTerms(query);
-        double qx = projector.x(lng), qy = projector.y(lat);
-        int best = -1;
-        double bestD2 = std::numeric_limits<double>::infinity();
-        for (size_t i = 0; i < places.size(); i++) {
-            double dx = places[i].px - qx;
-            double dy = places[i].py - qy;
-            double d2 = dx * dx + dy * dy;
-            if (d2 < bestD2 && matchesTerms(places[i], terms)) { bestD2 = d2; best = static_cast<int>(i); }
-        }
-        return makePlaceResult(best, lat, lng);
     }
 
     // -- Shortest path by travel time (seconds) --
@@ -488,35 +389,6 @@ private:
                 if (edges[ei].to == v) penalty[edgeId_[u][ei]] *= factor;
             }
         }
-    }
-
-    NearestPlaceResult makePlaceResult(int id, double lat, double lng) const {
-        NearestPlaceResult r;
-        r.placeIndex = id;
-        if (id >= 0) {
-            r.place = &places[id];
-            r.distMeters = geo::haversineMeters(lat, lng, r.place->lat, r.place->lng);
-        }
-        return r;
-    }
-
-    void addPlace(const json::Value* geom, const json::Value* props) {
-        const json::Value* c = geom->find("coordinates");
-        if (!c || !c->isArray() || !c->arr || c->arr->size() < 2) return;
-        Place p;
-        p.lng = (*c->arr)[0].asNumber();
-        p.lat = (*c->arr)[1].asNumber();
-        p.px = projector.x(p.lng);
-        p.py = projector.y(p.lat);
-        if (props) {
-            if (const json::Value* n = props->find("name")) p.name = n->asString();
-            if (const json::Value* a = props->find("address")) p.address = a->asString();
-        }
-        std::string text = p.name + " " + p.address;
-        std::transform(text.begin(), text.end(), text.begin(),
-                       [](unsigned char ch) { return (char)std::tolower(ch); });
-        p.searchText = text;
-        places.push_back(std::move(p));
     }
 
     NearestResult makeResult(int id, double lat, double lng) const {

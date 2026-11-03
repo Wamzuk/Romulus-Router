@@ -6,9 +6,6 @@
 //   POST /api/graph       -> build the road network from uploaded GeoJSON text
 //   POST /api/route       -> snap start/end to nodes and find routes
 //   POST /api/benchmark   -> compare k-d tree vs brute force over many queries
-//   POST /api/nearest     -> nearest place (coffee, hospital, bus_stop...) to a point,
-//                            k-d tree vs brute force
-//   POST /api/benchmark-places -> k-d tree vs brute force over many place queries
 //
 // The web page does all the drawing; every graph, k-d tree, snapping, routing
 // and timing calculation happens here so the comparison is measured in C++.
@@ -30,7 +27,6 @@
 #include <cctype>
 #include <algorithm>
 #include <vector>
-#include <cmath>
 
 using Clock = std::chrono::high_resolution_clock;
 static double microsSince(Clock::time_point t0) {
@@ -178,7 +174,6 @@ static http::Response handleGraph(const http::Request& req) {
     out.set("edges", (double)graph->edgeCount());
     out.set("kdTreeBuildMs", graph->kdTreeBuildMs);
     out.set("speedInfoFound", graph->speedInfoFound);
-    out.set("places", (double)graph->placeCount());
     json::Value warnings = json::Value::makeArray();
     for (auto& w : graph->warnings) warnings.push_back(w);
     out.set("warnings", warnings);
@@ -330,168 +325,6 @@ static http::Response handleBenchmark(const http::Request& req) {
     return jsonResponse(out);
 }
 
-
-// --------------------------------------------------------------------------
-// Nearest-place endpoints: the user searches for ANY text ("coffee",
-// "library", "dining hall", "pharmacy", a building name, a street...) and we
-// return the nearest place whose name/address matches.
-// --------------------------------------------------------------------------
-
-static json::Value placeJson(const NearestPlaceResult& r) {
-    json::Value v = json::Value::makeObject();
-    if (!r.place) return v;
-    v.set("name", r.place->name);
-    v.set("address", r.place->address);
-    v.set("lat", r.place->lat);
-    v.set("lng", r.place->lng);
-    v.set("distanceMeters", r.distMeters);
-    return v;
-}
-
-// Two methods agree if they picked the same place, or two places that are
-// (numerically) equally far away -- equidistant ties may legitimately differ.
-static bool samePlace(const NearestPlaceResult& a, const NearestPlaceResult& b) {
-    if (a.placeIndex == b.placeIndex) return true;
-    if (a.placeIndex < 0 || b.placeIndex < 0) return false;
-    return std::fabs(a.distMeters - b.distMeters) < 1e-6;
-}
-
-// Read the search text from the request ("query"; "category" is accepted as an alias).
-static std::string readQuery(const json::Value& body) {
-    std::string q;
-    if (const json::Value* v = body.find("query")) q = v->asString();
-    else if (const json::Value* c = body.find("category")) q = c->asString();
-    return q;
-}
-
-// POST /api/nearest  {lat, lng, query, repeat?}
-static http::Response handleNearest(const http::Request& req) {
-    std::shared_ptr<Graph> graph;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        graph = g_graph;
-    }
-    if (!graph) return errorResponse("No road network loaded yet. Upload a GeoJSON file first.");
-
-    json::Value body;
-    try {
-        body = json::parse(req.body);
-    } catch (const std::exception& e) {
-        return errorResponse(std::string("Bad request body: ") + e.what());
-    }
-    if (!body.find("lat") || !body.find("lng"))
-        return errorResponse("Request must include lat and lng.");
-
-    double lat = body.find("lat")->asNumber();
-    double lng = body.find("lng")->asNumber();
-    std::string query = readQuery(body);
-    int repeat = body.find("repeat") ? (int)body.find("repeat")->asNumber(1000) : 1000;
-    if (repeat < 1) repeat = 1;
-    if (repeat > 1000000) repeat = 1000000;
-
-    if (Graph::parseTerms(query).empty())
-        return errorResponse("Type something to search for (e.g. \"coffee\", \"library\").");
-    if (graph->placeCount() == 0)
-        return errorResponse("The loaded file has no places (Point features) to search.");
-
-    size_t matches = graph->countMatches(query);
-    if (matches == 0)
-        return errorResponse("No places match \"" + query + "\".");
-
-    NearestPlaceResult kd, brute;
-
-    auto t0 = Clock::now();
-    for (int i = 0; i < repeat; i++) kd = graph->nearestPlaceKd(query, lat, lng);
-    double kdMicros = microsSince(t0) / repeat;
-
-    auto t1 = Clock::now();
-    for (int i = 0; i < repeat; i++) brute = graph->nearestPlaceBrute(query, lat, lng);
-    double bruteMicros = microsSince(t1) / repeat;
-
-    json::Value out = json::Value::makeObject();
-    out.set("query", query);
-    out.set("totalPlaces", (double)graph->placeCount());
-    out.set("matchingPlaces", (double)matches);
-
-    json::Value kdOut = placeJson(kd);
-    kdOut.set("lookupMicrosAvg", kdMicros);
-    json::Value bruteOut = placeJson(brute);
-    bruteOut.set("lookupMicrosAvg", bruteMicros);
-    out.set("kdtree", kdOut);
-    out.set("brute", bruteOut);
-    out.set("lookupSpeedup", kdMicros > 0 ? bruteMicros / kdMicros : 0.0);
-    out.set("sameResult", samePlace(kd, brute));
-    return jsonResponse(out);
-}
-
-// POST /api/benchmark-places  {query?, queries?, seed?}
-static http::Response handleBenchmarkPlaces(const http::Request& req) {
-    std::shared_ptr<Graph> graph;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        graph = g_graph;
-    }
-    if (!graph) return errorResponse("No road network loaded yet. Upload a GeoJSON file first.");
-    if (graph->nodeCount() == 0) return errorResponse("The loaded network has no nodes.");
-
-    json::Value body;
-    try {
-        body = req.body.empty() ? json::Value::makeObject() : json::parse(req.body);
-    } catch (...) {
-        body = json::Value::makeObject();
-    }
-    std::string query = readQuery(body);
-    if (Graph::parseTerms(query).empty()) query = "a"; // default: any place with an "a" in it
-    int queries = body.find("queries") ? (int)body.find("queries")->asNumber(10000) : 10000;
-    unsigned seed = body.find("seed") ? (unsigned)body.find("seed")->asNumber(1) : 1u;
-    if (queries < 1) queries = 1;
-    if (queries > 2000000) queries = 2000000;
-
-    if (graph->placeCount() == 0)
-        return errorResponse("The loaded file has no places (Point features) to search.");
-    size_t matches = graph->countMatches(query);
-    if (matches == 0)
-        return errorResponse("No places match \"" + query + "\".");
-
-    // Random query points inside the road network's bounding box.
-    double minLat = 1e18, maxLat = -1e18, minLng = 1e18, maxLng = -1e18;
-    for (auto& n : graph->nodes) {
-        minLat = std::min(minLat, n.lat); maxLat = std::max(maxLat, n.lat);
-        minLng = std::min(minLng, n.lng); maxLng = std::max(maxLng, n.lng);
-    }
-    std::mt19937 rng(seed);
-    std::uniform_real_distribution<double> latDist(minLat, maxLat);
-    std::uniform_real_distribution<double> lngDist(minLng, maxLng);
-    std::vector<double> qLat(queries), qLng(queries);
-    for (int i = 0; i < queries; i++) { qLat[i] = latDist(rng); qLng[i] = lngDist(rng); }
-
-    std::vector<NearestPlaceResult> kdRes(queries), bruteRes(queries);
-
-    auto t0 = Clock::now();
-    for (int i = 0; i < queries; i++) kdRes[i] = graph->nearestPlaceKd(query, qLat[i], qLng[i]);
-    double kdTotalMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-
-    auto t1 = Clock::now();
-    for (int i = 0; i < queries; i++) bruteRes[i] = graph->nearestPlaceBrute(query, qLat[i], qLng[i]);
-    double bruteTotalMs = std::chrono::duration<double, std::milli>(Clock::now() - t1).count();
-
-    int mismatches = 0;
-    for (int i = 0; i < queries; i++) if (!samePlace(kdRes[i], bruteRes[i])) mismatches++;
-
-    json::Value out = json::Value::makeObject();
-    out.set("query", query);
-    out.set("totalPlaces", (double)graph->placeCount());
-    out.set("matchingPlaces", (double)matches);
-    out.set("queries", (double)queries);
-    out.set("kdTreeTotalMs", kdTotalMs);
-    out.set("kdTreeAvgMicros", (kdTotalMs * 1000.0) / queries);
-    out.set("bruteTotalMs", bruteTotalMs);
-    out.set("bruteAvgMicros", (bruteTotalMs * 1000.0) / queries);
-    out.set("speedup", kdTotalMs > 0 ? bruteTotalMs / kdTotalMs : 0.0);
-    out.set("mismatches", (double)mismatches);
-    return jsonResponse(out);
-}
-
 // Serve the Map Viewer HTML page at "/".
 static http::Response serveStatic(const http::Request& req) {
     if (req.path != "/" && req.path != "/index.html" && req.path != "/Map Viewer.html")
@@ -533,8 +366,6 @@ int main(int argc, char** argv) {
     server.route("POST", "/api/graph", handleGraph);
     server.route("POST", "/api/route", handleRoute);
     server.route("POST", "/api/benchmark", handleBenchmark);
-    server.route("POST", "/api/nearest", handleNearest);
-    server.route("POST", "/api/benchmark-places", handleBenchmarkPlaces);
     server.setDefault(serveStatic);
 
     if (!server.listen(host, port)) {
