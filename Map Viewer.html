@@ -106,7 +106,8 @@
   .route-item.sel { background: #f5f0ff; }
   .route-item .swatch { flex: 0 0 auto; width: 14px; height: 14px; border-radius: 4px; margin-top: 4px; }
   .route-item .rtitle { font-size: 16px; color: var(--strong); font-weight: 700; }
-  .route-item .rmeta { font-size: 14px; color: var(--muted); }
+  .route-item .info { flex: 1; min-width: 0; }
+  .route-item .rmeta { flex: 0 0 auto; align-self: center; margin-left: auto; padding-left: 8px; white-space: nowrap; font-size: 15px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
   .route-item .rtag { display: inline-block; font-size: 12px; font-weight: 800; color: #fff; background: var(--accent); border-radius: 999px; padding: 1px 8px; margin-left: 6px; vertical-align: middle; }
 
   .timing { margin: 6px 0 16px; }
@@ -144,6 +145,44 @@
     .toppill h1 { font-size: 18px; }
     .leaflet-control-attribution { margin-bottom: calc(52vh + 8px) !important; }
   }
+
+  /* ---- Comparison screen ---- */
+  #cmpOverlay { position: fixed; inset: 0; z-index: 3000; background: rgba(45,33,80,.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: none; padding: 20px; }
+  #cmpOverlay.open { display: flex; }
+  .cmp-card { margin: auto; width: 100%; max-width: 1100px; max-height: 100%; overflow-y: auto; background: #fff; border-radius: 24px; box-shadow: 0 20px 60px rgba(76,29,149,.35); padding: 26px 28px 28px; }
+  .cmp-top { display: flex; align-items: flex-start; gap: 16px; }
+  .cmp-top h2 { margin: 0; flex: 1; font-size: 26px; color: var(--title); line-height: 1.2; }
+  .cmp-top h2 small { display: block; margin-top: 4px; font-size: 14px; font-weight: 600; color: var(--muted); }
+  .cmp-close { flex: 0 0 auto; border: 0; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 15px; font-weight: 800; padding: 8px 16px; border-radius: 12px; cursor: pointer; }
+  .cmp-close:hover { background: rgba(124,58,237,.18); }
+  .verdict { margin: 18px 0 6px; padding: 16px 18px; border-radius: 16px; background: linear-gradient(135deg, rgba(124,58,237,.10), rgba(249,115,22,.10)); color: var(--strong); font-size: 16px; line-height: 1.55; }
+  .verdict .win { display: inline-block; margin-right: 8px; padding: 2px 12px; border-radius: 999px; color: #fff; font-weight: 800; font-size: 14px; vertical-align: 1px; }
+  .verdict.pending { background: var(--accent-soft); color: var(--muted); }
+  .cmp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 18px; margin-top: 18px; }
+  .chart-box { border: 1px solid var(--line); border-radius: 18px; padding: 16px 16px 14px; background: #fcfbff; }
+  .chart-box h3 { margin: 0 0 2px; font-size: 17px; color: var(--title); }
+  .chart-box .sub { margin: 0 0 8px; font-size: 13.5px; color: var(--muted); line-height: 1.4; }
+  .chart-box svg { width: 100%; height: auto; display: block; }
+  .chart-box svg text { font-family: inherit; }
+  .chart-box .why { margin: 8px 0 0; font-size: 14px; color: var(--text); line-height: 1.5; }
+  .chart-wait { padding: 50px 0; text-align: center; color: var(--muted); font-size: 14px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px; font-size: 13.5px; color: var(--strong); }
+  .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .cmp-explain { margin-top: 20px; border: 1px solid var(--line); border-radius: 18px; padding: 18px 20px; }
+  .cmp-explain h3 { margin: 0 0 8px; font-size: 18px; color: var(--title); }
+  .cmp-explain p, .cmp-explain li { font-size: 15px; line-height: 1.6; color: var(--text); }
+  .cmp-explain ul { margin: 6px 0 0; padding-left: 20px; }
+  .cmp-explain table { width: 100%; border-collapse: collapse; margin: 6px 0 12px; font-size: 14.5px; }
+  .cmp-explain th, .cmp-explain td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  .cmp-explain th { color: var(--muted); font-weight: 600; }
+  .cmp-explain td { color: var(--strong); }
+  .btn.cmp-open { margin-top: 4px; }
+  .chart-box svg .line-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: lineDraw 2.6s linear forwards; }
+  .chart-box svg .dot-pop { opacity: 0; animation: dotPop .35s ease-out forwards; }
+  @keyframes lineDraw { to { stroke-dashoffset: 0; } }
+  @keyframes dotPop { from { opacity: 0; } to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .chart-box svg .line-draw, .chart-box svg .dot-pop { animation: none; stroke-dashoffset: 0; opacity: 1; } }
+  @media (max-width: 520px) { .cmp-grid { grid-template-columns: 1fr; } .cmp-card { padding: 18px 14px; } }
 </style>
 </head>
 <body>
@@ -184,27 +223,29 @@
 
         <!-- Snapping method control (added) -->
         <div class="method">
-          <span class="lbl">Data Structure</span>
           <div class="seg" id="methodSeg" role="group" aria-label="Snapping method">
             <button type="button" data-method="kdtree" class="on">K-d tree</button>
             <button type="button" data-method="brute">Alternative</button>
-            <button type="button" data-method="both">Compare</button>
           </div>
         </div>
 
         <div class="actions">
           <button type="button" class="btn primary" id="findBtn" disabled>Find route</button>
-          <button type="button" class="btn" id="benchBtn" disabled>Run benchmark</button>
+          <button type="button" class="btn" id="compareBtn" disabled>Compare</button>
         </div>
 
         <!-- Results (added) -->
         <div class="results-panel" id="routeResults" hidden></div>
-        <div class="bench" id="benchResults" hidden></div>
       </div>
     </div>
   </aside>
 
   <div id="map"></div>
+
+  <!-- Comparison screen (added): opens when Compare is used to find a route -->
+  <div id="cmpOverlay" role="dialog" aria-modal="true" aria-labelledby="cmpTitle">
+    <div class="cmp-card" id="cmpCard"></div>
+  </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -228,6 +269,7 @@
 
   var layer = null;
   var dataBounds = null;
+  var boundaryRings = null;   // outline rings as [lat, lng] lists; used to test whether a place is inside
   var features = [];   // { feature, leaflet, text }
   var els = {
     drop: document.getElementById('drop'),
@@ -377,6 +419,7 @@
       }
     }
 
+    boundaryRings = rings;   // remember the outline so search can reject places outside it
     outlineLayer = L.layerGroup();
 
     if (DIM_OUTSIDE) {
@@ -400,6 +443,7 @@
     clearOutline();
     features = [];
     dataBounds = null;
+    boundaryRings = null;
 
     // We BUILD the GeoJSON layer so that search, popups and start/end point
     // picking keep working, but we deliberately DO NOT add it to the map. That
@@ -482,13 +526,35 @@
     return c;
   }
 
+  // Ray-casting point-in-polygon test for one ring of [lat, lng] pairs.
+  function inRing(lat, lng, ring) {
+    var inside = false;
+    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      var a = ring[i], b = ring[j];
+      var ay = a.lat !== undefined ? a.lat : a[0], ax = a.lat !== undefined ? a.lng : a[1];
+      var by = b.lat !== undefined ? b.lat : b[0], bx = b.lat !== undefined ? b.lng : b[1];
+      if ((ay > lat) !== (by > lat) && lng < (bx - ax) * (lat - ay) / (by - ay) + ax) inside = !inside;
+    }
+    return inside;
+  }
+
+  // True when the point is inside the purple outline. If there is no outline
+  // (nothing loaded yet), fall back to the data's bounding box.
+  function insideBoundary(ll) {
+    if (!boundaryRings || !boundaryRings.length) return !!(dataBounds && dataBounds.contains(ll));
+    for (var i = 0; i < boundaryRings.length; i++) {
+      if (inRing(ll.lat, ll.lng, boundaryRings[i])) return true;
+    }
+    return false;
+  }
+
   function parseCoords(q) {
     var m = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)\s*$/);
     if (!m) return null;
     var lat = parseFloat(m[1]), lng = parseFloat(m[2]);
     if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
     var point = L.latLng(lat, lng);
-    return dataBounds && dataBounds.contains(point) ? point : null;
+    return point;   // the caller checks insideBoundary(point)
   }
 
   function renderPrompt() {
@@ -578,10 +644,19 @@
       return;
     }
 
+    var outsideCount = 0, coordOutside = false;
     var coord = parseCoords(raw);
-    if (coord) u.items.push({ label: fmt(coord), sub: 'Use these coordinates', ll: coord });
+    if (coord) {
+      if (insideBoundary(coord)) u.items.push({ label: fmt(coord), sub: 'Use these coordinates', ll: coord });
+      else coordOutside = true;
+    }
 
-    var hits = features.filter(function (x) { return x.text.indexOf(q) !== -1; });
+    // Only offer places that sit inside the boundary; count the ones that don't.
+    var hits = features.filter(function (x) {
+      if (x.text.indexOf(q) === -1) return false;
+      if (!insideBoundary(locationOf(x))) { outsideCount++; return false; }
+      return true;
+    });
     hits.sort(function (a, b) {
       var as = a.name.toLowerCase().indexOf(q) === 0 ? 0 : 1;
       var bs = b.name.toLowerCase().indexOf(q) === 0 ? 0 : 1;
@@ -589,9 +664,87 @@
     });
     hits.slice(0, 5).forEach(function (x) { u.items.push({ label: x.name, sub: x.kind + ' (from file)', feature: x }); });
 
-    u.msg = q.length < 3 ? 'Type at least 3 characters to search the file.' : 'No matches in the uploaded file.';
+    if (coordOutside) u.msg = 'Those coordinates are outside the boundary.';
+    else if (q.length < 3) u.msg = 'Type at least 3 characters to search the file.';
+    else if (outsideCount) u.msg = 'Matches were found, but they are outside the boundary.';
+    else u.msg = 'No matches in the uploaded file.';
     u.on = u.items.length ? 0 : -1;
     renderList(k);
+    scheduleOsm(k, q, outsideCount);
+  }
+
+  // ---- Live OpenStreetMap (Nominatim) search, limited to the boundary ----
+  // Set USE_OSM_SEARCH to false to search only the uploaded file.
+  var USE_OSM_SEARCH = true;
+  var osmTimer = { start: null, end: null };
+  var osmToken = { start: 0, end: 0 };
+  var osmCache = {};
+  var osmLast = 0;
+
+  // Bounding box of the outline, used to ask Nominatim only about this area.
+  function boundaryBox() {
+    var s = 90, n = -90, w = 180, e = -180, any = false;
+    function add(lat, lng) { any = true; s = Math.min(s, lat); n = Math.max(n, lat); w = Math.min(w, lng); e = Math.max(e, lng); }
+    if (boundaryRings && boundaryRings.length) {
+      boundaryRings.forEach(function (r) {
+        r.forEach(function (p) { if (p.lat !== undefined) add(p.lat, p.lng); else add(p[0], p[1]); });
+      });
+    } else if (dataBounds) {
+      add(dataBounds.getSouth(), dataBounds.getWest()); add(dataBounds.getNorth(), dataBounds.getEast());
+    }
+    return any ? { w: w, s: s, e: e, n: n } : null;
+  }
+
+  // Nominatim asks for at most about one request per second, so requests are
+  // spaced out and results are cached.
+  function osmSearch(q, cb) {
+    var b = boundaryBox();
+    if (!b) { cb(null); return; }
+    var url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=10&bounded=1' +
+      '&viewbox=' + [b.w, b.n, b.e, b.s].join(',') + '&q=' + encodeURIComponent(q);
+    if (osmCache[url]) { cb(osmCache[url]); return; }
+    var wait = Math.max(0, osmLast + 1100 - Date.now());
+    setTimeout(function () {
+      osmLast = Date.now();
+      fetch(url, { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { if (!r.ok) throw new Error('http'); return r.json(); })
+        .then(function (rows) { osmCache[url] = rows; cb(rows); })
+        .catch(function () { cb(null); });
+    }, wait);
+  }
+
+  function scheduleOsm(k, q, outsideCount) {
+    var u = ui[k];
+    clearTimeout(osmTimer[k]);
+    var token = ++osmToken[k];
+    if (!USE_OSM_SEARCH || q.length < 3 || !boundaryBox()) return;
+    if (!u.items.length) { u.msg = 'Searching OpenStreetMap\u2026'; renderList(k); }
+    osmTimer[k] = setTimeout(function () {
+      osmSearch(q, function (rows) {
+        if (token !== osmToken[k] || pts[k] || u.list.hidden) return;   // stale, already chosen, or closed
+        var outside = outsideCount;
+        if (rows) {
+          var seen = {};
+          u.items.forEach(function (it) { seen[it.label.toLowerCase()] = true; });
+          var added = 0;
+          rows.forEach(function (row) {
+            if (added >= 5) return;
+            var ll = L.latLng(parseFloat(row.lat), parseFloat(row.lon));
+            if (!insideBoundary(ll)) { outside++; return; }
+            var label = row.name || String(row.display_name || '').split(',')[0];
+            if (!label || seen[label.toLowerCase()]) return;
+            seen[label.toLowerCase()] = true;
+            u.items.push({ label: label, sub: 'OpenStreetMap \u00b7 ' + String(row.type || 'place').replace(/_/g, ' '), ll: ll });
+            added++;
+          });
+          u.msg = outside ? 'Matches were found, but they are outside the boundary.' : 'No matches in the file or OpenStreetMap.';
+        } else if (!u.items.length) {
+          u.msg = outsideCount ? 'Matches were found, but they are outside the boundary.' : 'No matches in the file (OpenStreetMap search unavailable).';
+        }
+        u.on = u.items.length ? Math.max(u.on, 0) : -1;
+        renderList(k);
+      });
+    }, 700);
   }
 
   function pickItem(k, i) {
@@ -709,10 +862,7 @@
       graphReady = true;
       graphStats = res.data;
       var s = res.data;
-      var msg = fileName + ' \u2014 road network ready: ' +
-                s.nodes.toLocaleString() + ' nodes, ' + s.edges.toLocaleString() +
-                ' edges (k-d tree built in ' + s.kdTreeBuildMs.toFixed(3) + ' ms).';
-      if (s.warnings && s.warnings.length) msg += ' ' + s.warnings.join(' ');
+      var msg = 'File was read correctly: ' + fileName;
       setStatus(msg);
       updateFindEnabled();
     }).catch(function () {
@@ -737,7 +887,7 @@
     renderPrompt();
     var ready = graphReady && !!pts.start && !!pts.end && !busy;
     $('findBtn').disabled = !ready;
-    $('benchBtn').disabled = !graphReady || busy;
+    $('compareBtn').disabled = !ready;
   }
 
   // ---- Drawing ----
@@ -815,15 +965,9 @@
 
   // ---- Formatting ----
   function fmtDistance(m) {
-    if (m >= 1000) return (m / 1000).toFixed(2) + ' km';
-    return Math.round(m) + ' m';
-  }
-  function fmtTime(sec) {
-    if (sec < 60) return Math.round(sec) + ' s';
-    var mnt = Math.floor(sec / 60), s = Math.round(sec % 60);
-    if (mnt < 60) return mnt + ' min ' + (s ? s + ' s' : '').trim();
-    var h = Math.floor(mnt / 60); mnt = mnt % 60;
-    return h + ' h ' + mnt + ' min';
+    var ft = m * 3.28084;
+    if (ft >= 528) return (m / 1609.344).toFixed(2) + ' mi';   // 0.1 mile and up
+    return Math.round(ft) + ' ft';
   }
   function fmtMicros(u) {
     if (u >= 1000) return (u / 1000).toFixed(3) + ' ms';
@@ -832,20 +976,19 @@
 
   // ---- Results panel ----
   function hideRouteResults() { var p = $('routeResults'); p.hidden = true; p.innerHTML = ''; }
-  function hideBenchResults() { var p = $('benchResults'); p.hidden = true; p.innerHTML = ''; }
+  function hideBenchResults() { /* benchmark panel removed; kept as a no-op for existing callers */ }
 
   function routeListHtml(run, speedInfoFound) {
     var html = '';
     run.routes.forEach(function (rt, i) {
       var color = ROUTE_COLORS[i % ROUTE_COLORS.length];
-      var tag = i === 0 ? '<span class="rtag">Fastest</span>' : '';
-      var metaTime = speedInfoFound ? fmtTime(rt.travelSeconds) : null;
-      var meta = fmtDistance(rt.distanceMeters) + (metaTime ? ' \u00b7 ' + metaTime : '');
+      var tag = i === 0 ? '<span class="rtag">Best</span>' : '';
+      var meta = fmtDistance(rt.distanceMeters);
       html += '<button type="button" class="route-item' + (i === 0 ? ' sel' : '') + '" data-rank="' + rt.rank +
               '" style="border-left-color:' + color + '">' +
               '<span class="swatch" style="background:' + color + '"></span>' +
-              '<span class="info"><span class="rtitle">Route ' + rt.rank + tag + '</span>' +
-              '<span class="rmeta">' + meta + '</span></span></button>';
+              '<span class="info"><span class="rtitle">Route ' + rt.rank + tag + '</span></span>' +
+              '<span class="rmeta">' + meta + '</span></button>';
     });
     return html;
   }
@@ -874,7 +1017,6 @@
     drawRoutes(run);
     var label = methodName === 'brute' ? 'Brute force' : 'k-d tree';
     var html = '<h2>Routes</h2>';
-    if (!data.speedInfoFound) html += '<p class="route-note warn">No speed data found, routes minimize distance.</p>';
     html += routeListHtml(run, data.speedInfoFound);
     html += timingTableHtml([{ label: label, run: run }]);
     p.hidden = false;
@@ -896,7 +1038,6 @@
     drawRoutes(draw);
     var p = $('routeResults');
     var html = '<h2>Routes</h2>';
-    if (!data.speedInfoFound) html += '<p class="route-note warn">No speed data found, routes minimize distance.</p>';
     html += routeListHtml(draw, data.speedInfoFound);
     html += timingTableHtml([
       { label: 'k-d tree', run: data.kdtree },
@@ -910,10 +1051,13 @@
     } else {
       html += '<p class="route-note warn">The two methods snapped to different nodes.</p>';
     }
-    html += '<p class="route-note">Single-query timings are tiny and noisy. Use \u201cRun benchmark\u201d for the meaningful comparison.</p>';
+    html += '<p class="route-note">Single-query timings are tiny and noisy. The comparison charts use many queries for a fairer result.</p>';
+    html += '<button type="button" class="btn cmp-open" id="cmpReopen">View comparison charts</button>';
     p.hidden = false;
     p.innerHTML = html;
     wireRouteItems();
+    $('cmpReopen').addEventListener('click', function () { openCompare(data); });
+    openCompare(data, true);
   }
 
   function wireRouteItems() {
@@ -923,15 +1067,15 @@
   }
 
   // ---- Find route ----
-  $('findBtn').addEventListener('click', function () {
+  function runFind(m, btn, busyLabel) {
     if (!graphReady || !pts.start || !pts.end || busy) return;
     busy = true; updateFindEnabled();
     hideBenchResults();
-    var btn = $('findBtn'); var old = btn.textContent; btn.textContent = 'Finding\u2026';
+    var old = btn.textContent; btn.textContent = busyLabel;
     var body = {
       start: { lat: pts.start.lat, lng: pts.start.lng },
       end: { lat: pts.end.lat, lng: pts.end.lng },
-      method: method,
+      method: m,
       alternatives: 3,
       repeat: 1000
     };
@@ -942,45 +1086,255 @@
         setStatus(res.data.error || 'Could not find a route.', true);
         return;
       }
-      if (method === 'both') showBoth(res.data);
-      else showSingle(res.data, method);
+      if (m === 'both') showBoth(res.data);   // also opens the comparison screen
+      else showSingle(res.data, m);
     }).catch(function () {
       busy = false; btn.textContent = old; updateFindEnabled();
       setStatus('Could not reach the routing server.', true);
     });
-  });
+  }
 
-  // ---- Benchmark ----
-  $('benchBtn').addEventListener('click', function () {
-    if (!graphReady || busy) return;
-    busy = true; updateFindEnabled();
-    var btn = $('benchBtn'); var old = btn.textContent; btn.textContent = 'Running\u2026';
-    var p = $('benchResults');
-    p.hidden = false;
-    p.innerHTML = '<h2>Benchmark</h2><p class="route-note">Running 10,000 random queries through both methods\u2026</p>';
-    postJSON('/api/benchmark', { queries: 10000, seed: 1 }, false).then(function (res) {
-      busy = false; btn.textContent = old; updateFindEnabled();
-      if (!res.ok) { p.innerHTML = '<h2>Benchmark</h2><p class="route-note warn">' + esc(res.data.error || 'Benchmark failed.') + '</p>'; return; }
-      var d = res.data;
-      var html = '<h2>Benchmark</h2>';
-      html += '<div class="timing"><table><caption>' + d.queries.toLocaleString() + ' random nearest-node queries</caption>' +
-              '<tr><th>Method</th><th>Total</th><th>Average per query</th></tr>' +
-              '<tr><td>k-d tree</td><td>' + d.kdTreeTotalMs.toFixed(3) + ' ms</td><td>' + d.kdTreeAvgMicros.toFixed(4) + ' \u00b5s</td></tr>' +
-              '<tr><td>Brute force</td><td>' + d.bruteTotalMs.toFixed(3) + ' ms</td><td>' + d.bruteAvgMicros.toFixed(4) + ' \u00b5s</td></tr>' +
-              '</table></div>';
-      html += '<p class="speedup">k-d tree is <b>' + d.speedup.toFixed(2) + '\u00d7</b> ' +
-              (d.speedup >= 1 ? 'faster' : 'the speed of') + ' brute force on this network.</p>';
-      html += '<p class="route-note' + (d.mismatches === 0 ? ' same' : ' warn') + '">' +
-              (d.mismatches === 0 ? 'Both methods returned the same node for every query.' :
-               d.mismatches + ' mismatches (the two methods should always agree).') + '</p>';
-      html += '<p class="route-note">A single lookup is too fast to time reliably; this batch is the meaningful comparison. ' +
-              'On small networks the k-d tree\u2019s advantage is small and can even be slower due to overhead; it grows as the network gets larger.</p>';
-      p.innerHTML = html;
-    }).catch(function () {
-      busy = false; btn.textContent = old; updateFindEnabled();
-      p.innerHTML = '<h2>Benchmark</h2><p class="route-note warn">Could not reach the routing server.</p>';
+  $('findBtn').addEventListener('click', function () { runFind(method, $('findBtn'), 'Finding\u2026'); });
+  $('compareBtn').addEventListener('click', function () { runFind('both', $('compareBtn'), 'Comparing\u2026'); });
+
+  // =========================================================================
+  // COMPARISON SCREEN (added). Opens after "Find route" in Compare mode.
+  // Charts are plain SVG (no extra libraries). The route run supplies the
+  // single-route numbers; /api/benchmark is called a few times with growing
+  // query counts to draw the scaling chart and to decide a winner.
+  // =========================================================================
+  var KD_COLOR = '#7c3aed', BF_COLOR = '#f97316', SEARCH_COLOR = '#cbd5e1';
+  var BENCH_SIZES = [1000, 5000, 20000, 50000];
+  var cmpToken = 0;     // bumped on close/reopen so stale async results are ignored
+  var cmpCache = null;  // { route: data, bench: [results] }
+
+  function fmtMs(ms) {
+    if (ms >= 1000) return (ms / 1000).toFixed(2) + ' s';
+    if (ms >= 10) return ms.toFixed(1) + ' ms';
+    return ms.toFixed(2) + ' ms';
+  }
+
+  function svgBars(items, fmt) {
+    var W = 460, H = 230, padL = 24, padR = 24, top = 30, bottom = 46;
+    var max = 0; items.forEach(function (it) { max = Math.max(max, it.value); });
+    if (!max) max = 1;
+    var slot = (W - padL - padR) / items.length, bw = Math.min(100, slot * 0.55);
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+    s += '<line x1="' + padL + '" y1="' + (H - bottom) + '" x2="' + (W - padR) + '" y2="' + (H - bottom) + '" stroke="#ddd6fe"/>';
+    items.forEach(function (it, i) {
+      var h = (H - top - bottom) * it.value / max; if (h < 2) h = 2;
+      var x = padL + slot * i + (slot - bw) / 2, y = H - bottom - h;
+      s += '<rect x="' + x + '" y="' + y + '" width="' + bw + '" height="' + h + '" rx="6" fill="' + it.color + '"/>';
+      s += '<text x="' + (x + bw / 2) + '" y="' + (y - 7) + '" text-anchor="middle" font-size="14" font-weight="800" fill="#2d2150">' + esc(fmt(it.value)) + '</text>';
+      s += '<text x="' + (x + bw / 2) + '" y="' + (H - bottom + 22) + '" text-anchor="middle" font-size="14" font-weight="700" fill="#5b5675">' + esc(it.label) + '</text>';
     });
-  });
+    return s + '</svg>';
+  }
+
+  // Each group is one stacked bar: { label, parts: [{ value, color }] }
+  function svgStacked(groups) {
+    var W = 460, H = 230, padL = 24, padR = 24, top = 24, bottom = 46;
+    var max = 0;
+    groups.forEach(function (g) { var t = 0; g.parts.forEach(function (p) { t += p.value; }); g.total = t; max = Math.max(max, t); });
+    if (!max) max = 1;
+    var slot = (W - padL - padR) / groups.length, bw = Math.min(100, slot * 0.55);
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+    s += '<line x1="' + padL + '" y1="' + (H - bottom) + '" x2="' + (W - padR) + '" y2="' + (H - bottom) + '" stroke="#ddd6fe"/>';
+    groups.forEach(function (g, i) {
+      var x = padL + slot * i + (slot - bw) / 2, yCursor = H - bottom;
+      g.parts.forEach(function (p) {
+        var h = (H - top - bottom) * p.value / max; if (h < 1.5) h = 1.5;
+        yCursor -= h;
+        s += '<rect x="' + x + '" y="' + yCursor + '" width="' + bw + '" height="' + h + '" fill="' + p.color + '"/>';
+      });
+      s += '<text x="' + (x + bw / 2) + '" y="' + (yCursor - 7) + '" text-anchor="middle" font-size="14" font-weight="800" fill="#2d2150">' + esc(fmtMicros(g.total)) + '</text>';
+      s += '<text x="' + (x + bw / 2) + '" y="' + (H - bottom + 22) + '" text-anchor="middle" font-size="14" font-weight="700" fill="#5b5675">' + esc(g.label) + '</text>';
+    });
+    return s + '</svg>';
+  }
+
+  // series: [{ color, values: [y per x] }], xLabels: [text]
+  function svgLines(series, xLabels, fmtY) {
+    var W = 460, H = 240, padL = 82, padR = 40, top = 20, bottom = 52;
+    var max = 0; series.forEach(function (sr) { sr.values.forEach(function (v) { max = Math.max(max, v); }); });
+    if (!max) max = 1;
+    var iw = W - padL - padR, ih = H - top - bottom;
+    function px(i) { return padL + (xLabels.length === 1 ? iw / 2 : iw * i / (xLabels.length - 1)); }
+    function py(v) { return top + ih * (1 - v / max); }
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
+    for (var g = 0; g <= 4; g++) {
+      var v = max * g / 4, y = py(v);
+      s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="' + (g === 0 ? '#c4b5fd' : '#ede9fe') + '"/>';
+      s += '<text x="' + (padL - 8) + '" y="' + (y + 4) + '" text-anchor="end" font-size="12" fill="#8a84a3">' + esc(fmtY(v)) + '</text>';
+    }
+    xLabels.forEach(function (lb, i) {
+      s += '<text x="' + px(i) + '" y="' + (H - bottom + 20) + '" text-anchor="middle" font-size="12.5" fill="#5b5675">' + esc(lb) + '</text>';
+    });
+    s += '<text x="' + (padL + iw / 2) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="12.5" font-weight="700" fill="#8a84a3">Number of nearest-node queries</text>';
+    var DUR = 2.6;   // seconds for the lines to draw across
+    series.forEach(function (sr) {
+      var xs = sr.values.map(function (v, i) { return px(i); });
+      var ys = sr.values.map(function (v) { return py(v); });
+      // Cumulative share of the line's length at each point, so each dot
+      // appears right as the drawing line reaches it.
+      var cum = [0], total = 0;
+      for (var k = 1; k < xs.length; k++) {
+        total += Math.sqrt(Math.pow(xs[k] - xs[k - 1], 2) + Math.pow(ys[k] - ys[k - 1], 2));
+        cum.push(total);
+      }
+      var d = xs.map(function (x, i) { return (i ? 'L' : 'M') + x + ',' + ys[i]; }).join(' ');
+      s += '<path class="line-draw" pathLength="1" d="' + d + '" fill="none" stroke="' + sr.color + '" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>';
+      sr.values.forEach(function (v, i) {
+        var delay = total ? (cum[i] / total) * DUR : 0;
+        s += '<circle class="dot-pop" style="animation-delay:' + delay.toFixed(2) + 's" cx="' + xs[i] + '" cy="' + ys[i] + '" r="4.5" fill="#fff" stroke="' + sr.color + '" stroke-width="2.5"/>';
+      });
+    });
+    return s + '</svg>';
+  }
+
+  function legendHtml(entries) {
+    return '<div class="legend">' + entries.map(function (e) {
+      return '<span><i style="background:' + e.color + '"></i>' + esc(e.name) + '</span>';
+    }).join('') + '</div>';
+  }
+
+  function chartBox(id, title, sub) {
+    return '<div class="chart-box"><h3>' + esc(title) + '</h3><p class="sub">' + esc(sub) + '</p>' +
+           '<div id="' + id + '"><div class="chart-wait">Running benchmark\u2026</div></div></div>';
+  }
+
+  function closeCompare() { cmpToken++; $('cmpOverlay').classList.remove('open'); }
+  $('cmpOverlay').addEventListener('mousedown', function (e) { if (e.target === this) closeCompare(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeCompare(); });
+
+  function openCompare(routeData, forceRerun) {
+    var kd = routeData.kdtree, bf = routeData.brute;
+    if (!kd || !bf || kd.error || bf.error) return;
+    var token = ++cmpToken;
+    var nodes = graphStats ? graphStats.nodes : null;
+
+    var haveCache = cmpCache && cmpCache.route === routeData && cmpCache.bench.length === BENCH_SIZES.length && !forceRerun;
+    if (!haveCache) cmpCache = { route: routeData, bench: [] };
+
+    var card = $('cmpCard');
+    card.innerHTML =
+      '<div class="cmp-top"><h2 id="cmpTitle">k-d tree vs brute force' +
+        '<small>Both methods find the nearest road node to your start and end points. Here is how they compare' +
+        (nodes ? ' on this network (' + nodes.toLocaleString() + ' nodes).' : '.') + '</small></h2>' +
+        '<button type="button" class="cmp-close" id="cmpClose">Close \u2715</button></div>' +
+      '<div class="verdict pending" id="cmpVerdict">Running benchmarks to decide\u2026</div>' +
+      '<div class="cmp-grid">' +
+        chartBox('chLookup', 'Lookup time for your route', 'Average time to snap one point to the nearest node, measured over 1,000 repeats of your actual start/end.') +
+        chartBox('chBench', 'Lookup time on random points', 'Average per query over many random points across the whole map. Less affected by one lucky or unlucky spot.') +
+        chartBox('chScale', 'Total time as queries grow', 'Time to answer N queries. A flatter line means the method scales better.') +
+        chartBox('chShare', 'Where the route time goes', 'Time to find your route, split into nearest-node lookup and the route search (Dijkstra).') +
+      '</div>' +
+      '<div class="cmp-explain" id="cmpExplain"></div>';
+    $('cmpClose').addEventListener('click', closeCompare);
+    $('cmpOverlay').classList.add('open');
+    card.scrollTop = 0;
+
+    // Chart 1: from this route's own run (available immediately).
+    $('chLookup').innerHTML = svgBars([
+      { label: 'k-d tree', value: kd.lookupMicrosAvg, color: KD_COLOR },
+      { label: 'Brute force', value: bf.lookupMicrosAvg, color: BF_COLOR }
+    ], fmtMicros) +
+      '<p class="why">' + (kd.lookupMicrosAvg < bf.lookupMicrosAvg
+        ? 'The k-d tree was ' + (bf.lookupMicrosAvg / kd.lookupMicrosAvg).toFixed(1) + '\u00d7 faster for this route.'
+        : 'Brute force was as fast or faster for this route. On small networks the k-d tree has little to skip.') + '</p>';
+
+    // Chart 4: from this route's own run.
+    $('chShare').innerHTML = svgStacked([
+      { label: 'k-d tree', parts: [{ value: kd.lookupMicrosAvg, color: KD_COLOR }, { value: kd.searchMicros, color: SEARCH_COLOR }] },
+      { label: 'Brute force', parts: [{ value: bf.lookupMicrosAvg, color: BF_COLOR }, { value: bf.searchMicros, color: SEARCH_COLOR }] }
+    ]) + legendHtml([
+      { color: KD_COLOR, name: 'k-d tree lookup' }, { color: BF_COLOR, name: 'Brute-force lookup' }, { color: SEARCH_COLOR, name: 'Route search (same for both)' }
+    ]) + '<p class="why">The route search takes about ' +
+      Math.round(kd.searchMicros / Math.max(kd.lookupMicrosAvg, 1e-9)).toLocaleString() +
+      '\u00d7 longer than the k-d tree lookup, so it dominates the total either way. The lookup is only a small slice of the work.</p>';
+
+    function finish() {
+      if (token !== cmpToken) return;
+      renderCompareBench(kd, bf, cmpCache.bench);
+    }
+
+    if (haveCache) { finish(); return; }
+
+    // Benchmarks run one after another so the server is not hit all at once.
+    var i = 0;
+    (function next() {
+      if (token !== cmpToken) return;
+      if (i >= BENCH_SIZES.length) { finish(); return; }
+      postJSON('/api/benchmark', { queries: BENCH_SIZES[i], seed: 1 }, false).then(function (res) {
+        if (token !== cmpToken) return;
+        if (!res.ok) { $('cmpVerdict').innerHTML = esc(res.data.error || 'Benchmark failed.'); return; }
+        cmpCache.bench.push(res.data); i++; next();
+      }).catch(function () {
+        if (token !== cmpToken) return;
+        $('cmpVerdict').innerHTML = 'Could not reach the routing server.';
+      });
+    })();
+  }
+
+  function renderCompareBench(kd, bf, bench) {
+    var big = bench[bench.length - 1];
+    var mid = bench[Math.min(2, bench.length - 1)];   // 20,000-query run for the bar chart
+    var sp = big.speedup || 0;
+    var mism = 0; bench.forEach(function (b) { mism += b.mismatches; });
+    var nodes = big.nodes;
+
+    // Chart 2: random-point averages.
+    $('chBench').innerHTML = svgBars([
+      { label: 'k-d tree', value: mid.kdTreeAvgMicros, color: KD_COLOR },
+      { label: 'Brute force', value: mid.bruteAvgMicros, color: BF_COLOR }
+    ], fmtMicros) + '<p class="why">Averaged over ' + mid.queries.toLocaleString() + ' random queries.</p>';
+
+    // Chart 3: scaling.
+    $('chScale').innerHTML = svgLines([
+      { color: BF_COLOR, values: bench.map(function (b) { return b.bruteTotalMs; }) },
+      { color: KD_COLOR, values: bench.map(function (b) { return b.kdTreeTotalMs; }) }
+    ], bench.map(function (b) { return b.queries.toLocaleString(); }), fmtMs) +
+      legendHtml([{ color: KD_COLOR, name: 'k-d tree' }, { color: BF_COLOR, name: 'Brute force' }]);
+
+    // Verdict.
+    var winner, color, line;
+    if (sp >= 1.5) {
+      winner = 'k-d tree'; color = KD_COLOR;
+      line = 'is better at finding the nearest node. It was <b>' + sp.toFixed(1) + '\u00d7 faster</b> than brute force over ' + big.queries.toLocaleString() + ' random queries.';
+    } else if (sp > 0 && sp <= 1 / 1.5) {
+      winner = 'Brute force'; color = BF_COLOR;
+      line = 'is faster here (<b>' + (1 / sp).toFixed(1) + '\u00d7</b>). With only ' + nodes.toLocaleString() + ' nodes, scanning everything is cheap and the k-d tree\u2019s bookkeeping costs more than it saves.';
+    } else {
+      winner = 'Too close to call'; color = '#64748b';
+      line = '\u2014 the two were within 1.5\u00d7 of each other (' + sp.toFixed(2) + '\u00d7). This network is small enough that skipping nodes barely helps.';
+    }
+    var saved = big.bruteAvgMicros - big.kdTreeAvgMicros;
+    var build = big.kdTreeBuildMs;
+    var breakEven = (saved > 0 && build > 0) ? Math.ceil(build * 1000 / saved) : null;
+    var v = $('cmpVerdict');
+    v.className = 'verdict';
+    v.innerHTML = '<span class="win" style="background:' + color + '">' + esc(winner) + '</span>' + line +
+      ' Both methods returned the <b>' + (mism === 0 ? 'same node every time' : 'different nodes ' + mism + ' times (unexpected)') + '</b>, so this is purely a speed difference, not an accuracy one.';
+
+    // Written explanation.
+    var ex = '<h3>What this means</h3>' +
+      '<table><tr><th></th><th>k-d tree</th><th>Brute force</th></tr>' +
+      '<tr><td>How it searches</td><td>Splits the map into regions and only checks regions near your point</td><td>Measures the distance to every node and keeps the smallest</td></tr>' +
+      '<tr><td>Time per lookup</td><td>~ log n on average</td><td>n (grows with every node added)</td></tr>' +
+      '<tr><td>Setup cost</td><td>Builds the tree once' + (build ? ' (' + fmtMs(build) + ' here)' : '') + '</td><td>None</td></tr>' +
+      '<tr><td>Measured per query</td><td>' + fmtMicros(big.kdTreeAvgMicros) + '</td><td>' + fmtMicros(big.bruteAvgMicros) + '</td></tr></table>' +
+      '<ul>' +
+      '<li><b>Why the gap grows:</b> brute force checks all ' + nodes.toLocaleString() + ' nodes for every query, so doubling the map roughly doubles its time. The k-d tree adds about one extra comparison level when the map doubles. That is why the brute-force line in the scaling chart climbs faster.</li>' +
+      (breakEven ? '<li><b>Is the setup worth it?</b> The tree costs ' + fmtMs(build) + ' to build and saves about ' + fmtMicros(saved) + ' per query, so it pays for itself after roughly <b>' + breakEven.toLocaleString() + ' queries</b>. For a router that answers many requests, that happens quickly.</li>' : '') +
+      '<li><b>Why finding one route feels the same:</b> the route search (Dijkstra) is identical for both and takes far longer than either lookup, so a single route is not noticeably faster. The k-d tree matters when you do many lookups or use a much larger road network.</li>' +
+      '<li><b>Bottom line:</b> ' + (winner === 'k-d tree'
+          ? 'use the k-d tree. It returns the same answers, scales much better, and the one-time build cost is small.'
+          : winner === 'Brute force'
+            ? 'on a network this small brute force is simpler and just as good. Try a larger road file to see the k-d tree pull ahead.'
+            : 'either works at this size. The k-d tree is the safer choice because it keeps its speed as the network grows.') + '</li>' +
+      '</ul>';
+    $('cmpExplain').innerHTML = ex;
+  }
 
   updateFindEnabled();
 
