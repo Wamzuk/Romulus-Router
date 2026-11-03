@@ -179,9 +179,6 @@ static http::Response handleGraph(const http::Request& req) {
     out.set("kdTreeBuildMs", graph->kdTreeBuildMs);
     out.set("speedInfoFound", graph->speedInfoFound);
     out.set("places", (double)graph->placeCount());
-    json::Value cats = json::Value::makeObject();
-    for (auto& kv : graph->placeIndex) cats.set(kv.first, (double)kv.second.places.size());
-    out.set("placeCategories", cats);
     json::Value warnings = json::Value::makeArray();
     for (auto& w : graph->warnings) warnings.push_back(w);
     out.set("warnings", warnings);
@@ -335,7 +332,9 @@ static http::Response handleBenchmark(const http::Request& req) {
 
 
 // --------------------------------------------------------------------------
-// Nearest-place endpoints (coffee shops, hospitals, bus stops, ...)
+// Nearest-place endpoints: the user searches for ANY text ("coffee",
+// "library", "dining hall", "pharmacy", a building name, a street...) and we
+// return the nearest place whose name/address matches.
 // --------------------------------------------------------------------------
 
 static json::Value placeJson(const NearestPlaceResult& r) {
@@ -343,17 +342,10 @@ static json::Value placeJson(const NearestPlaceResult& r) {
     if (!r.place) return v;
     v.set("name", r.place->name);
     v.set("address", r.place->address);
-    v.set("category", r.place->category);
     v.set("lat", r.place->lat);
     v.set("lng", r.place->lng);
     v.set("distanceMeters", r.distMeters);
     return v;
-}
-
-static json::Value categoryList(const Graph& g) {
-    json::Value cats = json::Value::makeObject();
-    for (auto& kv : g.placeIndex) cats.set(kv.first, (double)kv.second.places.size());
-    return cats;
 }
 
 // Two methods agree if they picked the same place, or two places that are
@@ -364,7 +356,15 @@ static bool samePlace(const NearestPlaceResult& a, const NearestPlaceResult& b) 
     return std::fabs(a.distMeters - b.distMeters) < 1e-6;
 }
 
-// POST /api/nearest  {lat, lng, category, repeat?}
+// Read the search text from the request ("query"; "category" is accepted as an alias).
+static std::string readQuery(const json::Value& body) {
+    std::string q;
+    if (const json::Value* v = body.find("query")) q = v->asString();
+    else if (const json::Value* c = body.find("category")) q = c->asString();
+    return q;
+}
+
+// POST /api/nearest  {lat, lng, query, repeat?}
 static http::Response handleNearest(const http::Request& req) {
     std::shared_ptr<Graph> graph;
     {
@@ -384,32 +384,34 @@ static http::Response handleNearest(const http::Request& req) {
 
     double lat = body.find("lat")->asNumber();
     double lng = body.find("lng")->asNumber();
-    std::string category = body.find("category") ? body.find("category")->asString("coffee") : "coffee";
+    std::string query = readQuery(body);
     int repeat = body.find("repeat") ? (int)body.find("repeat")->asNumber(1000) : 1000;
     if (repeat < 1) repeat = 1;
     if (repeat > 1000000) repeat = 1000000;
 
-    auto it = graph->placeIndex.find(category);
-    if (it == graph->placeIndex.end() || it->second.places.empty()) {
-        json::Value v = json::Value::makeObject();
-        v.set("error", "No places in category '" + category + "' in the loaded file.");
-        v.set("categories", categoryList(*graph));
-        return jsonResponse(v, 400);
-    }
+    if (Graph::parseTerms(query).empty())
+        return errorResponse("Type something to search for (e.g. \"coffee\", \"library\").");
+    if (graph->placeCount() == 0)
+        return errorResponse("The loaded file has no places (Point features) to search.");
+
+    size_t matches = graph->countMatches(query);
+    if (matches == 0)
+        return errorResponse("No places match \"" + query + "\".");
 
     NearestPlaceResult kd, brute;
 
     auto t0 = Clock::now();
-    for (int i = 0; i < repeat; i++) kd = graph->nearestPlaceKd(category, lat, lng);
+    for (int i = 0; i < repeat; i++) kd = graph->nearestPlaceKd(query, lat, lng);
     double kdMicros = microsSince(t0) / repeat;
 
     auto t1 = Clock::now();
-    for (int i = 0; i < repeat; i++) brute = graph->nearestPlaceBrute(category, lat, lng);
+    for (int i = 0; i < repeat; i++) brute = graph->nearestPlaceBrute(query, lat, lng);
     double bruteMicros = microsSince(t1) / repeat;
 
     json::Value out = json::Value::makeObject();
-    out.set("category", category);
-    out.set("placesInCategory", (double)it->second.places.size());
+    out.set("query", query);
+    out.set("totalPlaces", (double)graph->placeCount());
+    out.set("matchingPlaces", (double)matches);
 
     json::Value kdOut = placeJson(kd);
     kdOut.set("lookupMicrosAvg", kdMicros);
@@ -422,7 +424,7 @@ static http::Response handleNearest(const http::Request& req) {
     return jsonResponse(out);
 }
 
-// POST /api/benchmark-places  {category?, queries?, seed?}
+// POST /api/benchmark-places  {query?, queries?, seed?}
 static http::Response handleBenchmarkPlaces(const http::Request& req) {
     std::shared_ptr<Graph> graph;
     {
@@ -438,19 +440,18 @@ static http::Response handleBenchmarkPlaces(const http::Request& req) {
     } catch (...) {
         body = json::Value::makeObject();
     }
-    std::string category = body.find("category") ? body.find("category")->asString("coffee") : "coffee";
+    std::string query = readQuery(body);
+    if (Graph::parseTerms(query).empty()) query = "a"; // default: any place with an "a" in it
     int queries = body.find("queries") ? (int)body.find("queries")->asNumber(10000) : 10000;
     unsigned seed = body.find("seed") ? (unsigned)body.find("seed")->asNumber(1) : 1u;
     if (queries < 1) queries = 1;
     if (queries > 2000000) queries = 2000000;
 
-    auto it = graph->placeIndex.find(category);
-    if (it == graph->placeIndex.end() || it->second.places.empty()) {
-        json::Value v = json::Value::makeObject();
-        v.set("error", "No places in category '" + category + "' in the loaded file.");
-        v.set("categories", categoryList(*graph));
-        return jsonResponse(v, 400);
-    }
+    if (graph->placeCount() == 0)
+        return errorResponse("The loaded file has no places (Point features) to search.");
+    size_t matches = graph->countMatches(query);
+    if (matches == 0)
+        return errorResponse("No places match \"" + query + "\".");
 
     // Random query points inside the road network's bounding box.
     double minLat = 1e18, maxLat = -1e18, minLng = 1e18, maxLng = -1e18;
@@ -467,19 +468,20 @@ static http::Response handleBenchmarkPlaces(const http::Request& req) {
     std::vector<NearestPlaceResult> kdRes(queries), bruteRes(queries);
 
     auto t0 = Clock::now();
-    for (int i = 0; i < queries; i++) kdRes[i] = graph->nearestPlaceKd(category, qLat[i], qLng[i]);
+    for (int i = 0; i < queries; i++) kdRes[i] = graph->nearestPlaceKd(query, qLat[i], qLng[i]);
     double kdTotalMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
 
     auto t1 = Clock::now();
-    for (int i = 0; i < queries; i++) bruteRes[i] = graph->nearestPlaceBrute(category, qLat[i], qLng[i]);
+    for (int i = 0; i < queries; i++) bruteRes[i] = graph->nearestPlaceBrute(query, qLat[i], qLng[i]);
     double bruteTotalMs = std::chrono::duration<double, std::milli>(Clock::now() - t1).count();
 
     int mismatches = 0;
     for (int i = 0; i < queries; i++) if (!samePlace(kdRes[i], bruteRes[i])) mismatches++;
 
     json::Value out = json::Value::makeObject();
-    out.set("category", category);
-    out.set("places", (double)it->second.places.size());
+    out.set("query", query);
+    out.set("totalPlaces", (double)graph->placeCount());
+    out.set("matchingPlaces", (double)matches);
     out.set("queries", (double)queries);
     out.set("kdTreeTotalMs", kdTotalMs);
     out.set("kdTreeAvgMicros", (kdTotalMs * 1000.0) / queries);
