@@ -15,3 +15,7 @@ add_executable(romulus_router main.cpp)
 # Thread-per-connection server needs the threading library.
 find_package(Threads REQUIRED)
 target_link_libraries(romulus_router PRIVATE Threads::Threads)
+
+if(WIN32)
+    target_link_libraries(romulus_router PRIVATE ws2_32)
+endif()

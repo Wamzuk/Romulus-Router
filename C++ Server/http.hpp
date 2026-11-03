@@ -13,12 +13,27 @@
 #include <cstring>
 #include <iostream>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "Ws2_32.lib")
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#endif
 
 namespace http {
+
+#ifdef _WIN32
+using Socket = SOCKET;
+#else
+using Socket = int;
+#endif
 
 struct Request {
     std::string method;
@@ -59,6 +74,12 @@ class Server {
 public:
     using Handler = std::function<Response(const Request&)>;
 
+    ~Server() {
+#ifdef _WIN32
+        if (winsockInitialized_) WSACleanup();
+#endif
+    }
+
     void route(const std::string& method, const std::string& path, Handler h) {
         handlers_.push_back({method, path, std::move(h)});
     }
@@ -67,10 +88,26 @@ public:
     void setDefault(Handler h) { defaultHandler_ = std::move(h); }
 
     bool listen(const std::string& host, int port) {
+#ifdef _WIN32
+        WSADATA wsaData{};
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            std::cerr << "WSAStartup failed\n";
+            return false;
+        }
+        winsockInitialized_ = true;
+#endif
         serverFd_ = socket(AF_INET, SOCK_STREAM, 0);
-        if (serverFd_ < 0) { perror("socket"); return false; }
+        if (socketFailed(serverFd_)) {
+            reportSocketError("socket");
+            cleanupSockets();
+            return false;
+        }
 
+#ifdef _WIN32
+        char opt = 1;
+#else
         int opt = 1;
+#endif
         setsockopt(serverFd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
         sockaddr_in addr{};
@@ -80,8 +117,16 @@ public:
             addr.sin_addr.s_addr = INADDR_ANY;
         }
 
-        if (bind(serverFd_, (sockaddr*)&addr, sizeof(addr)) < 0) { perror("bind"); return false; }
-        if (::listen(serverFd_, 64) < 0) { perror("listen"); return false; }
+        if (bind(serverFd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+            reportSocketError("bind");
+            cleanupSockets();
+            return false;
+        }
+        if (::listen(serverFd_, 64) < 0) {
+            reportSocketError("listen");
+            cleanupSockets();
+            return false;
+        }
         return true;
     }
 
@@ -89,9 +134,13 @@ public:
     void run() {
         while (true) {
             sockaddr_in client{};
+#ifdef _WIN32
+            int len = sizeof(client);
+#else
             socklen_t len = sizeof(client);
-            int fd = accept(serverFd_, (sockaddr*)&client, &len);
-            if (fd < 0) continue;
+#endif
+            Socket fd = accept(serverFd_, reinterpret_cast<sockaddr*>(&client), &len);
+            if (socketFailed(fd)) continue;
             std::thread(&Server::handleConnection, this, fd).detach();
         }
     }
@@ -100,7 +149,41 @@ private:
     struct RouteEntry { std::string method; std::string path; Handler handler; };
     std::vector<RouteEntry> handlers_;
     Handler defaultHandler_;
+#ifdef _WIN32
+    SOCKET serverFd_ = INVALID_SOCKET;
+    bool winsockInitialized_ = false;
+#else
     int serverFd_ = -1;
+#endif
+
+#ifdef _WIN32
+    static bool socketFailed(Socket fd) { return fd == INVALID_SOCKET; }
+    static void reportSocketError(const char* operation) {
+        std::cerr << operation << " failed: " << WSAGetLastError() << "\n";
+    }
+    static void closeSocket(Socket fd) { closesocket(fd); }
+#else
+    static bool socketFailed(Socket fd) { return fd < 0; }
+    static void reportSocketError(const char* operation) { perror(operation); }
+    static void closeSocket(Socket fd) { close(fd); }
+#endif
+
+    void cleanupSockets() {
+        if (!socketFailed(serverFd_)) {
+            closeSocket(serverFd_);
+#ifdef _WIN32
+            serverFd_ = INVALID_SOCKET;
+#else
+            serverFd_ = -1;
+#endif
+        }
+#ifdef _WIN32
+        if (winsockInitialized_) {
+            WSACleanup();
+            winsockInitialized_ = false;
+        }
+#endif
+    }
 
     static std::string toLower(std::string s) {
         std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -108,17 +191,23 @@ private:
     }
 
     // Read exactly `n` more bytes into `buf` beyond what is already there.
-    static bool readAtLeast(int fd, std::string& buf, size_t target) {
+    static bool readAtLeast(
+        Socket fd,
+        std::string& buf, size_t target) {
         char tmp[65536];
         while (buf.size() < target) {
+#ifdef _WIN32
+            int r = recv(fd, tmp, sizeof(tmp), 0);
+#else
             ssize_t r = recv(fd, tmp, sizeof(tmp), 0);
+#endif
             if (r <= 0) return false;
             buf.append(tmp, r);
         }
         return true;
     }
 
-    void handleConnection(int fd) {
+    void handleConnection(Socket fd) {
         std::string buf;
         char tmp[65536];
 
@@ -127,12 +216,16 @@ private:
         while (true) {
             headerEnd = buf.find("\r\n\r\n");
             if (headerEnd != std::string::npos) break;
+#ifdef _WIN32
+            int r = recv(fd, tmp, sizeof(tmp), 0);
+#else
             ssize_t r = recv(fd, tmp, sizeof(tmp), 0);
-            if (r <= 0) { close(fd); return; }
-            buf.append(tmp, r);
+#endif
+            if (r <= 0) { closeSocket(fd); return; }
+            buf.append(tmp, static_cast<size_t>(r));
             if (buf.size() > 512 * 1024 && headerEnd == std::string::npos) {
                 sendResponse(fd, Response::make(413, "text/plain", "Headers too large"));
-                close(fd);
+                closeSocket(fd);
                 return;
             }
         }
@@ -149,16 +242,16 @@ private:
 
         if (contentLength > 64 * 1024 * 1024) { // 64 MB cap
             sendResponse(fd, Response::make(413, "text/plain", "Payload too large"));
-            close(fd);
+            closeSocket(fd);
             return;
         }
 
-        if (!readAtLeast(fd, buf, bodyStart + contentLength)) { close(fd); return; }
+        if (!readAtLeast(fd, buf, bodyStart + contentLength)) { closeSocket(fd); return; }
         req.body = buf.substr(bodyStart, contentLength);
 
         Response res = dispatch(req);
         sendResponse(fd, res);
-        close(fd);
+        closeSocket(fd);
     }
 
     void parseHeaders(const std::string& block, Request& req) {
@@ -222,7 +315,9 @@ private:
         return out;
     }
 
-    void sendResponse(int fd, const Response& res) {
+    void sendResponse(
+        Socket fd,
+        const Response& res) {
         std::ostringstream out;
         out << "HTTP/1.1 " << res.status << " " << statusText(res.status) << "\r\n";
         out << "Content-Type: " << res.contentType << "\r\n";
@@ -236,10 +331,16 @@ private:
         sendAll(fd, res.body);
     }
 
-    static void sendAll(int fd, const std::string& data) {
+    static void sendAll(
+        Socket fd,
+        const std::string& data) {
         size_t sent = 0;
         while (sent < data.size()) {
+#ifdef _WIN32
+            int w = send(fd, data.data() + sent, static_cast<int>(data.size() - sent), 0);
+#else
             ssize_t w = send(fd, data.data() + sent, data.size() - sent, 0);
+#endif
             if (w <= 0) return;
             sent += w;
         }

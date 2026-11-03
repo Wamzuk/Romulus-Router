@@ -23,6 +23,10 @@
 #include <chrono>
 #include <iostream>
 #include <string>
+#include <cstdlib>
+#include <cctype>
+#include <algorithm>
+#include <vector>
 
 using Clock = std::chrono::high_resolution_clock;
 static double microsSince(Clock::time_point t0) {
@@ -110,7 +114,7 @@ static json::Value runRouting(const Graph& g,
         return run;
     }
 
-    // --- Route search (Dijkstra + alternatives), timed ---
+    // --- Shared route search with alternatives, timed ---
     auto t1 = Clock::now();
     auto paths = g.routes(snapStart.nodeId, snapEnd.nodeId, alternatives);
     double searchMicros = microsSince(t1);

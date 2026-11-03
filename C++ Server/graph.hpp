@@ -1,11 +1,11 @@
 // graph.hpp - the road network graph, the k-d tree and brute-force nearest-node
-// search, and Dijkstra-based routing with alternatives.
+// search, and shortest-path routing with alternatives.
 //
 // This file is the core of the project. It holds:
 //   * Graph       - nodes (intersections / road endpoints) and directed edges.
 //   * KdTree      - a 2-D k-d tree over the nodes for O(log n) nearest search.
 //   * bruteNearest- the O(n) baseline the k-d tree is compared against.
-//   * route()     - Dijkstra shortest path plus simple alternative routes.
+//   * route()     - shortest path plus simple alternative routes.
 #pragma once
 
 #include "json.hpp"
@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cmath>
 #include <stdexcept>
+#include <functional>
 
 struct Node {
     double lat;
@@ -111,13 +112,13 @@ private:
 
         int axis = depth % 2;
         double diff = (axis == 0 ? qx - (*nodes_)[p].px : qy - (*nodes_)[p].py);
-        int near = diff < 0 ? kn.left : kn.right;
-        int far  = diff < 0 ? kn.right : kn.left;
+        int nearNode = diff < 0 ? kn.left : kn.right;
+        int farNode = diff < 0 ? kn.right : kn.left;
 
-        searchRec(near, qx, qy, depth + 1);
+        searchRec(nearNode, qx, qy, depth + 1);
         // Only cross to the far side if the splitting plane is closer than the
         // best distance found so far -- this pruning is what makes it fast.
-        if (diff * diff < bestDist2_) searchRec(far, qx, qy, depth + 1);
+        if (diff * diff < bestDist2_) searchRec(farNode, qx, qy, depth + 1);
     }
 };
 
@@ -145,6 +146,8 @@ public:
     void build(const json::Value& geojson) {
         nodes.clear();
         adj.clear();
+        edgeId_.clear();
+        totalEdges_ = 0;
         warnings.clear();
         speedInfoFound = false;
 
@@ -245,7 +248,7 @@ public:
         return makeResult(best, lat, lng);
     }
 
-    // -- Dijkstra shortest path by travel time (seconds) --
+    // -- Shortest path by travel time (seconds) --
     // Returns the ordered list of node indices, or empty if unreachable.
     // `blocked` edges (by "from,to" packed key) are skipped -- used to generate
     // alternatives.
