@@ -88,7 +88,7 @@ static json::Value runRouting(const Graph& g,
                               double startLat, double startLng,
                               double endLat, double endLng,
                               int alternatives, int repeat,
-                              bool useKd) {
+                              bool useKd, TravelMode mode) {
     json::Value run = json::Value::makeObject();
 
     // --- Nearest-node lookup, timed and repeated ---
@@ -116,7 +116,7 @@ static json::Value runRouting(const Graph& g,
 
     // --- Shared route search with alternatives, timed ---
     auto t1 = Clock::now();
-    auto paths = g.routes(snapStart.nodeId, snapEnd.nodeId, alternatives);
+    auto paths = g.routes(snapStart.nodeId, snapEnd.nodeId, alternatives, mode);
     double searchMicros = microsSince(t1);
 
     if (paths.empty()) {
@@ -211,11 +211,15 @@ static http::Response handleRoute(const http::Request& req) {
     if (alternatives < 1) alternatives = 1;
     if (alternatives > 10) alternatives = 10;
 
+    // "mode": "walk" (default; uses footpaths + roads) or "drive" (roads only).
+    std::string modeStr = body.find("mode") ? body.find("mode")->asString("walk") : "walk";
+    TravelMode travel = (modeStr == "drive") ? TravelMode::Drive : TravelMode::Walk;
+
     json::Value out = json::Value::makeObject();
     out.set("speedInfoFound", graph->speedInfoFound);
 
     auto buildRun = [&](bool useKd) {
-        return runRouting(*graph, sLat, sLng, eLat, eLng, alternatives, repeat, useKd);
+        return runRouting(*graph, sLat, sLng, eLat, eLng, alternatives, repeat, useKd, travel);
     };
 
     if (method == "brute") {

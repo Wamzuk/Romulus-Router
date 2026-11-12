@@ -31,10 +31,18 @@ struct Node {
     double py;
 };
 
+// How the route is travelled. Drive uses road speeds and skips footpaths;
+// Walk uses walking speed on every walkable edge (roads AND footpaths) and
+// ignores one-way restrictions.
+enum class TravelMode { Drive, Walk };
+
 struct Edge {
     int to;          // destination node index
     double length;   // metres
-    double time;     // seconds (length / effective speed)
+    double time;     // seconds driving (length / road speed)
+    double walkTime; // seconds walking (length / walking speed)
+    bool driveOk;    // cars may use this edge (false for footpaths, wrong-way one-ways)
+    bool walkOk;     // pedestrians may use this edge
 };
 
 // Result of a nearest-node query. Both k-d tree and brute force fill this in.
@@ -150,6 +158,7 @@ public:
         totalEdges_ = 0;
         warnings.clear();
         speedInfoFound = false;
+        walkOnlyLines_ = 0;
 
         const json::Value* feats = geojson.find("features");
         std::vector<const json::Value*> featureList;
@@ -216,6 +225,10 @@ public:
         if (!speedInfoFound) {
             warnings.push_back("No maxspeed tags found; travel times use per-class default speeds.");
         }
+        if (walkOnlyLines_ > 0) {
+            warnings.push_back("Loaded " + std::to_string(walkOnlyLines_) +
+                               " footpath line(s); they are used in walking mode only.");
+        }
         if (polyIgnored > 0) {
             warnings.push_back("Ignored " + std::to_string(polyIgnored) +
                                " polygon feature" + (polyIgnored == 1 ? "" : "s") + " (boundary).");
@@ -259,8 +272,9 @@ public:
         bool found = false;
     };
 
-    PathResult dijkstra(int src, int dst,
+    PathResult dijkstra(int src, int dst, TravelMode mode = TravelMode::Walk,
                         const std::vector<double>* edgePenalty = nullptr) const {
+        const bool walk = (mode == TravelMode::Walk);
         PathResult out;
         if (src < 0 || dst < 0 || src >= (int)nodes.size() || dst >= (int)nodes.size())
             return out;
@@ -283,7 +297,8 @@ public:
             const auto& edges = adj[u];
             for (size_t ei = 0; ei < edges.size(); ei++) {
                 const Edge& e = edges[ei];
-                double w = e.time;
+                if (walk ? !e.walkOk : !e.driveOk) continue;
+                double w = walk ? e.walkTime : e.time;
                 if (edgePenalty) w *= (*edgePenalty)[edgeGlobalId(u, ei)];
                 double nd = d + w;
                 if (nd < dist[e.to]) {
@@ -306,7 +321,7 @@ public:
         for (int v = dst; prev[v] != -1; v = prev[v]) {
             const Edge& e = adj[prev[v]][prevEdge[v]];
             out.distanceMeters += e.length;
-            out.travelSeconds += e.time;
+            out.travelSeconds += walk ? e.walkTime : e.time;
         }
         return out;
     }
@@ -315,7 +330,8 @@ public:
     // penalising the edges of routes already returned (a simple, robust
     // alternative-routes heuristic). Alternatives that are too similar to an
     // existing route, or that duplicate it exactly, are dropped.
-    std::vector<PathResult> routes(int src, int dst, int k) const {
+    std::vector<PathResult> routes(int src, int dst, int k,
+                                   TravelMode mode = TravelMode::Walk) const {
         std::vector<PathResult> results;
         if (k < 1) k = 1;
 
@@ -323,7 +339,7 @@ public:
         std::vector<double> penalty(totalEdges_, 1.0);
 
         for (int attempt = 0; attempt < k * 4 && (int)results.size() < k; attempt++) {
-            PathResult p = dijkstra(src, dst, results.empty() ? nullptr : &penalty);
+            PathResult p = dijkstra(src, dst, mode, results.empty() ? nullptr : &penalty);
             if (!p.found) break;
 
             // Deduplicate: skip if identical node sequence to an existing route.
@@ -361,6 +377,7 @@ private:
     // Each edge gets a stable global id so penalties can be addressed by it.
     std::vector<std::vector<int>> edgeId_; // edgeId_[u][ei] -> global id
     size_t totalEdges_ = 0;
+    int walkOnlyLines_ = 0; // footpath-type lines seen during build()
 
     size_t edgeGlobalId(int u, size_t ei) const { return edgeId_[u][ei]; }
 
@@ -483,6 +500,12 @@ private:
         }
         if (speedMps <= 0) speedMps = geo::defaultSpeedMps(roadClass);
 
+        // Walking: footpaths are walk-only; roads are walkable at walking speed.
+        const bool walkOnly = geo::isWalkOnlyClass(roadClass);
+        const bool walkable = geo::isWalkableClass(roadClass);
+        const double walkMps = geo::walkSpeedMps(roadClass);
+        if (walkOnly) walkOnlyLines_++;
+
         // Walk the vertices, connecting consecutive points with edges.
         int prevId = -1;
         double prevLng = 0, prevLat = 0;
@@ -494,8 +517,10 @@ private:
             if (prevId != -1 && id != prevId) {
                 double len = geo::haversineMeters(prevLat, prevLng, lat, lng);
                 double t = len / speedMps;
-                addEdge(prevId, id, len, t);
-                if (!oneway) addEdge(id, prevId, len, t);
+                double wt = len / walkMps;
+                // One-way applies to cars only; pedestrians may walk either way.
+                addEdge(prevId, id, len, t, wt, !walkOnly, walkable);
+                addEdge(id, prevId, len, t, wt, !walkOnly && !oneway, walkable);
             }
             prevId = id;
             prevLng = lng;
@@ -503,8 +528,9 @@ private:
         }
     }
 
-    void addEdge(int from, int to, double length, double time) {
-        adj[from].push_back(Edge{to, length, time});
+    void addEdge(int from, int to, double length, double time,
+                 double walkTime, bool driveOk, bool walkOk) {
+        adj[from].push_back(Edge{to, length, time, walkTime, driveOk, walkOk});
         edgeId_[from].push_back(static_cast<int>(totalEdges_++));
     }
 };

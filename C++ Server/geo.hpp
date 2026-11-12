@@ -80,4 +80,23 @@ inline double defaultSpeedMps(const std::string& roadClass) {
     return kmh(40);
 }
 
+// ---- Travel modes: walking support ----------------------------------------
+// Classes that only pedestrians (or bikes) can use. Cars must never route on
+// these, but walkers can.
+inline bool isWalkOnlyClass(const std::string& c) {
+    return c == "footway" || c == "pedestrian" || c == "path" || c == "steps" ||
+           c == "cycleway" || c == "bridleway" || c == "sidewalk" || c == "crosswalk";
+}
+
+// Pedestrians are not allowed on motorways.
+inline bool isWalkableClass(const std::string& c) {
+    return c != "motorway" && c != "motorway_link";
+}
+
+// Walking speed (m/s) by class: ~5 km/h on the flat, slower on stairs.
+inline double walkSpeedMps(const std::string& roadClass) {
+    double kmh = (roadClass == "steps") ? 3.0 : 5.0;
+    return kmh * 1000.0 / 3600.0;
+}
+
 } // namespace geo
