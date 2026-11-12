@@ -6,6 +6,8 @@
 //   POST /api/graph       -> build the road network from uploaded GeoJSON text
 //   POST /api/route       -> snap start/end to nodes and find routes
 //   POST /api/benchmark   -> compare k-d tree vs brute force over many queries
+//   POST /api/places      -> load the named places for nearest-place search
+//   POST /api/nearest     -> nearest place to a point, k-d tree vs brute force
 //
 // The web page does all the drawing; every graph, k-d tree, snapping, routing
 // and timing calculation happens here so the comparison is measured in C++.
@@ -14,6 +16,7 @@
 #include "json.hpp"
 #include "geo.hpp"
 #include "graph.hpp"
+#include "places.hpp"
 
 #include <fstream>
 #include <sstream>
@@ -38,6 +41,7 @@ static double microsSince(Clock::time_point t0) {
 // --------------------------------------------------------------------------
 static std::mutex g_mutex;
 static std::shared_ptr<Graph> g_graph;
+static std::shared_ptr<PlaceIndex> g_places;
 static std::string g_htmlPath;
 
 static http::Response jsonResponse(const json::Value& v, int status = 200) {
@@ -329,6 +333,112 @@ static http::Response handleBenchmark(const http::Request& req) {
     return jsonResponse(out);
 }
 
+// POST /api/places  {places:[{name, category, lat, lng}, ...]}
+// Builds one k-d tree per category for nearest-place search.
+static http::Response handlePlaces(const http::Request& req) {
+    json::Value body;
+    try { body = json::parse(req.body); }
+    catch (const std::exception& e) { return errorResponse(std::string("Bad request body: ") + e.what()); }
+
+    const json::Value* arr = body.find("places");
+    if (!arr || !arr->isArray()) return errorResponse("Request must include a places array.");
+
+    std::vector<PlaceIndex::Place> list;
+    for (auto& v : *arr->arr) {
+        const json::Value* la = v.find("lat");
+        const json::Value* lo = v.find("lng");
+        if (!la || !lo || !la->isNumber() || !lo->isNumber()) continue;
+        PlaceIndex::Place p;
+        p.lat = la->asNumber();
+        p.lng = lo->asNumber();
+        if (!std::isfinite(p.lat) || !std::isfinite(p.lng)) continue;
+        p.name = v.find("name") ? v.find("name")->asString() : "";
+        p.category = v.find("category") ? v.find("category")->asString() : "";
+        list.push_back(std::move(p));
+        if (list.size() >= 500000) break;
+    }
+
+    auto idx = std::make_shared<PlaceIndex>();
+    idx->build(std::move(list));
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_places = idx;
+    }
+    json::Value out = json::Value::makeObject();
+    out.set("count", (double)idx->places.size());
+    out.set("buildMs", idx->buildMs);
+    return jsonResponse(out);
+}
+
+// POST /api/nearest  {lat, lng, category?, repeat?}
+// Finds the nearest place with the k-d tree AND with a brute-force scan,
+// timing both, so the page can show them side by side.
+static http::Response handleNearest(const http::Request& req) {
+    std::shared_ptr<PlaceIndex> idx;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        idx = g_places;
+    }
+    if (!idx || idx->places.empty()) return errorResponse("No places loaded yet. Upload a file that has named places.");
+
+    json::Value body;
+    try { body = json::parse(req.body); }
+    catch (const std::exception& e) { return errorResponse(std::string("Bad request body: ") + e.what()); }
+    if (!body.find("lat") || !body.find("lng")) return errorResponse("Request must include lat and lng.");
+
+    double lat = body.find("lat")->asNumber();
+    double lng = body.find("lng")->asNumber();
+    std::string cat = body.find("category") ? body.find("category")->asString("") : "";
+    int repeat = body.find("repeat") ? (int)body.find("repeat")->asNumber(1000) : 1000;
+    if (repeat < 1) repeat = 1;
+    if (repeat > 100000) repeat = 100000;
+
+    size_t candidates = idx->groupSize(cat);
+    if (candidates == 0) return errorResponse("There are no places in that category.");
+
+    // The sink keeps the compiler from skipping repeated identical lookups.
+    volatile long sink = 0;
+    int kdId = -1, brId = -1;
+
+    auto t0 = Clock::now();
+    for (int i = 0; i < repeat; i++) { kdId = idx->nearestKd(cat, lat, lng); sink = sink + kdId; }
+    double kdMicros = microsSince(t0) / repeat;
+
+    auto t1 = Clock::now();
+    for (int i = 0; i < repeat; i++) { brId = idx->nearestBrute(cat, lat, lng); sink = sink + brId; }
+    double brMicros = microsSince(t1) / repeat;
+
+    if (kdId < 0 || brId < 0) return errorResponse("Could not find a nearest place.");
+
+    auto runJson = [&](int id, double micros) {
+        const PlaceIndex::Place& p = idx->places[id];
+        json::Value place = json::Value::makeObject();
+        place.set("name", p.name);
+        place.set("category", p.category);
+        place.set("lat", p.lat);
+        place.set("lng", p.lng);
+        json::Value run = json::Value::makeObject();
+        run.set("place", place);
+        run.set("distanceMeters", geo::haversineMeters(lat, lng, p.lat, p.lng));
+        run.set("lookupMicros", micros);
+        return run;
+    };
+
+    json::Value kd = runJson(kdId, kdMicros);
+    json::Value br = runJson(brId, brMicros);
+    // Two different places at exactly the same distance still count as agreeing.
+    double dKd = kd.find("distanceMeters")->asNumber();
+    double dBr = br.find("distanceMeters")->asNumber();
+
+    json::Value out = json::Value::makeObject();
+    out.set("kdtree", kd);
+    out.set("brute", br);
+    out.set("candidates", (double)candidates);
+    out.set("sameResult", kdId == brId || std::fabs(dKd - dBr) < 1e-6);
+    out.set("speedup", kdMicros > 0 ? brMicros / kdMicros : 0.0);
+    return jsonResponse(out);
+}
+
 // Serve the Map Viewer HTML page at "/".
 static http::Response serveStatic(const http::Request& req) {
     if (req.path != "/" && req.path != "/index.html" && req.path != "/Map Viewer.html")
@@ -370,6 +480,8 @@ int main(int argc, char** argv) {
     server.route("POST", "/api/graph", handleGraph);
     server.route("POST", "/api/route", handleRoute);
     server.route("POST", "/api/benchmark", handleBenchmark);
+    server.route("POST", "/api/places", handlePlaces);
+    server.route("POST", "/api/nearest", handleNearest);
     server.setDefault(serveStatic);
 
     if (!server.listen(host, port)) {
