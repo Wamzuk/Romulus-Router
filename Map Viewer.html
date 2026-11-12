@@ -94,6 +94,10 @@
   .suggest li small { display: block; font-size: 12px; color: var(--muted); }
   .suggest li.on, .suggest li:hover { background: var(--accent-soft); }
   .suggest li.empty { cursor: default; color: var(--muted); }
+  /* Ring shown on the map while a search suggestion is hovered */
+  .hover-ring { width: 44px; height: 44px; box-sizing: border-box; border-radius: 50%; border: 4px solid #f97316; background: rgba(249,115,22,.25); box-shadow: 0 0 0 3px #fff, 0 4px 12px rgba(0,0,0,.35); animation: hoverPulse 1.1s ease-in-out infinite; }
+  @keyframes hoverPulse { 0%, 100% { transform: scale(.85); } 50% { transform: scale(1.15); } }
+  @media (prefers-reduced-motion: reduce) { .hover-ring { animation: none; } }
   .suggest li.empty:hover { background: none; }
 
   .method { margin: 4px 0 16px; }
@@ -601,8 +605,38 @@
     if (pins[k]) { map.removeLayer(pins[k]); pins[k] = null; }
   }
 
+  // ---- Hover preview: show where a suggestion is on the map ----
+  var hoverMarker = null, hoverShape = null;
+
+  function clearPreview() {
+    if (hoverMarker) { map.removeLayer(hoverMarker); hoverMarker = null; }
+    if (hoverShape) { map.removeLayer(hoverShape); hoverShape = null; }
+  }
+
+  function previewItem(k, i) {
+    clearPreview();
+    var it = ui[k].items[i];
+    if (!it) return;
+    var ll = it.feature ? locationOf(it.feature) : it.ll;
+    if (!ll) return;
+    // Buildings and other shapes get their outline drawn too, not just the ring.
+    if (it.feature && !it.feature.leaflet.getLatLng) {
+      hoverShape = L.geoJSON(it.feature.feature, {
+        style: { color: '#f97316', weight: 5, opacity: 1, fillColor: '#f97316', fillOpacity: 0.3 },
+        interactive: false
+      }).addTo(map);
+    }
+    hoverMarker = L.marker(ll, {
+      icon: L.divIcon({ className: '', html: '<div class="hover-ring"></div>', iconSize: [44, 44], iconAnchor: [22, 22] }),
+      interactive: false, keyboard: false, zIndexOffset: 2000
+    }).addTo(map);
+    // Only move the map if the place is off screen.
+    if (!map.getBounds().pad(-0.1).contains(ll)) map.panTo(ll);
+  }
+
   function closeList(k) {
     var u = ui[k];
+    clearPreview();
     u.list.hidden = true; u.items = []; u.on = -1;
     u.input.setAttribute('aria-expanded', 'false');
   }
@@ -632,6 +666,7 @@
 
   function renderList(k) {
     var u = ui[k];
+    clearPreview();
     u.list.innerHTML = '';
     if (!u.items.length) {
       var li = document.createElement('li');
@@ -644,12 +679,50 @@
       li.setAttribute('role', 'option');
       li.innerHTML = esc(it.label) + '<small>' + esc(it.sub) + '</small>';
       li.addEventListener('mousedown', function (e) { e.preventDefault(); pickItem(k, i); });
+      li.addEventListener('mouseenter', function () {
+        u.on = i;
+        Array.prototype.forEach.call(u.list.children, function (el, j) { el.classList.toggle('on', j === i); });
+        previewItem(k, i);
+      });
       u.list.appendChild(li);
     });
     if (u.on >= u.items.length) u.on = u.items.length ? 0 : -1;
     u.list.hidden = false;
     u.input.setAttribute('aria-expanded', 'true');
+    u.list.onmouseleave = clearPreview;
     highlight(k);
+  }
+
+  // Build the suggestion rows for matches from the loaded file. Each row shows the place's
+  // address when it has one. Places that share a name (two Dunkin' locations, say) are told
+  // apart by that address, or by their coordinates if the addresses match too, and the
+  // start/end box then shows the address too so you can see which one you picked.
+  function fileItems(shown) {
+    var count = {};
+    shown.forEach(function (x) { var n = x.name.toLowerCase(); count[n] = (count[n] || 0) + 1; });
+    var items = shown.map(function (x) {
+      var props = (x.feature && x.feature.properties) || {};
+      var addr = String(props.address || '').trim();
+      var hasAddr = !!addr && addr.toLowerCase() !== x.name.toLowerCase();
+      return {
+        label: x.name,
+        sub: hasAddr ? addr : x.kind + ' (from file)',
+        addr: hasAddr ? addr : '',
+        dup: count[x.name.toLowerCase()] > 1,
+        feature: x
+      };
+    });
+    // Work out which rows still look identical BEFORE changing any of them.
+    items.forEach(function (it) { it.key = it.label.toLowerCase() + '|' + it.sub; });
+    items.forEach(function (it) {
+      it.clash = it.dup && items.filter(function (o) { return o.key === it.key; }).length > 1;
+    });
+    items.forEach(function (it) {
+      if (!it.dup) return;
+      if (it.clash) it.sub += ' \u00b7 ' + fmt(locationOf(it.feature));
+      it.pick = it.label + ' (' + (it.addr && !it.clash ? it.addr : fmt(locationOf(it.feature))) + ')';
+    });
+    return items;
   }
 
   function showSuggestions(k) {
@@ -683,7 +756,7 @@
       var bs = b.name.toLowerCase().indexOf(q) === 0 ? 0 : 1;
       return as - bs;
     });
-    hits.slice(0, 5).forEach(function (x) { u.items.push({ label: x.name, sub: x.kind + ' (from file)', feature: x }); });
+    fileItems(hits.slice(0, 5)).forEach(function (it) { u.items.push(it); });
 
     if (coordOutside) u.msg = 'Those coordinates are outside the boundary.';
     else if (q.length < 3) u.msg = 'Type at least 3 characters to search the file.';
@@ -771,7 +844,7 @@
   function pickItem(k, i) {
     var it = ui[k].items[i];
     if (!it) return;
-    if (it.feature) choose(k, locationOf(it.feature), it.label);
+    if (it.feature) choose(k, locationOf(it.feature), it.pick || it.label);
     else choose(k, it.ll, it.label);
   }
 
@@ -784,8 +857,8 @@
     u.input.addEventListener('focus', function () { if (u.input.value.trim() && !pts[k]) showSuggestions(k); });
     u.input.addEventListener('blur', function () { closeList(k); });
     u.input.addEventListener('keydown', function (e) {
-      if (e.key === 'ArrowDown' && u.items.length) { e.preventDefault(); u.on = (u.on + 1) % u.items.length; highlight(k); }
-      else if (e.key === 'ArrowUp' && u.items.length) { e.preventDefault(); u.on = (u.on - 1 + u.items.length) % u.items.length; highlight(k); }
+      if (e.key === 'ArrowDown' && u.items.length) { e.preventDefault(); u.on = (u.on + 1) % u.items.length; highlight(k); previewItem(k, u.on); }
+      else if (e.key === 'ArrowUp' && u.items.length) { e.preventDefault(); u.on = (u.on - 1 + u.items.length) % u.items.length; highlight(k); previewItem(k, u.on); }
       else if (e.key === 'Enter') { e.preventDefault(); if (u.on >= 0) pickItem(k, u.on); else showSuggestions(k, true); }
       else if (e.key === 'Escape') { closeList(k); }
     });
