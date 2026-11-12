@@ -43,6 +43,16 @@
   .drop span { display: block; margin-top: 4px; font-size: 14px; color: var(--muted); }
   .drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 
+  .osm { margin: 10px 20px 0; }
+  .osm-field { position: relative; }
+  .osm-row { display: flex; gap: 8px; }
+  .osm-row .pt-input { flex: 1; min-width: 0; }
+  .osm-row button { flex: 0 0 auto; padding: 10px 20px; border: 2px solid var(--accent); border-radius: 14px; background: transparent; color: var(--accent); font: inherit; font-size: 16px; font-weight: 800; cursor: pointer; transition: background .15s; }
+  .osm-row button:hover:not(:disabled), .osm-row button:focus-visible { background: var(--accent-soft); }
+  .osm-row button:disabled { opacity: .6; cursor: progress; }
+  .osm small { display: block; margin-top: 6px; font-size: 13px; color: var(--muted); }
+  .osm small a { color: var(--accent); font-weight: 700; }
+
   .status { margin: 14px 20px 0; padding-bottom: 16px; font-size: 15px; font-weight: 600; color: var(--text); }
   .status.error { color: #dc2626; }
 
@@ -198,7 +208,18 @@
       <input type="file" id="file" accept=".geojson,.json,application/geo+json,application/json">
     </label>
 
-    <div class="status" id="status" role="status">Load a GeoJSON file to search within it.</div>
+    <div class="osm">
+      <div class="osm-field">
+        <div class="osm-row">
+          <input type="search" id="osmSearch" class="pt-input" placeholder="Or search a place to load from OpenStreetMap" autocomplete="off" aria-label="Search a place to load from OpenStreetMap">
+          <button type="button" id="osmGo">Load</button>
+        </div>
+        <ul class="suggest" id="osmResults" hidden></ul>
+      </div>
+      <small>Loads roads and footpaths in an area up to about 2 miles across. Large cities (like Boston) load only their central area, so search for a specific neighborhood, campus or street to load a different part. Data &copy; OpenStreetMap contributors.</small>
+    </div>
+
+    <div class="status" id="status" role="status">Load a GeoJSON file, or search for a place to load from OpenStreetMap.</div>
 
     <div class="panel">
       <div class="route-wrap" id="route">
@@ -800,6 +821,233 @@
 
   els.file.addEventListener('change', function () { readFile(els.file.files[0]); els.file.value = ''; });
 
+  // =========================================================================
+  // LOAD FROM OPENSTREETMAP (added). Fetches the roads, footpaths and named
+  // buildings around a searched place from the Overpass API, converts them
+  // to the same GeoJSON shape the file upload uses, and hands them to load(),
+  // which sends them to the C++ server's /api/graph exactly like an uploaded file.
+  // =========================================================================
+  var OVERPASS_URLS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter'
+  ];
+  var OSM_MAX_LAT_SPAN = 0.03;    // about 2 miles tall
+  var OSM_MAX_LNG_SPAN = 0.04;    // about 2 miles wide at New England latitudes
+  var OSM_MAX_PLACES = 3000;
+  var OSM_ROAD_CLASSES = 'motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|' +
+    'tertiary|tertiary_link|unclassified|residential|living_street|service|pedestrian|footway|path|steps|cycleway|track';
+  var OSM_FOOT_CLASSES = { footway: 1, path: 1, steps: 1, cycleway: 1, pedestrian: 1 };
+  var osmBusy = false;
+
+  function osmQuery(b) {
+    var bb = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()].map(function (v) { return v.toFixed(6); }).join(',');
+    return '[out:json][timeout:50];' +
+      'way["highway"~"^(' + OSM_ROAD_CLASSES + ')$"]["access"!~"^(private|no)$"](' + bb + ');out geom;' +
+      '(nwr["name"]["building"](' + bb + ');nwr["name"]["amenity"](' + bb + '););out center tags;';
+  }
+
+  // Overpass JSON -> GeoJSON FeatureCollection in the shape the server expects:
+  // LineStrings with highway/class/name/maxspeed/oneway, plus named Point places.
+  // Overpass returns every road that touches the box in FULL, including the parts that
+  // run for miles beyond it. `box` ({s,w,n,e}) trims each way to the vertices inside the
+  // box so the network (and its outline) matches the area that was asked for.
+  function clipRuns(coords, box) {
+    if (!box) return [coords];
+    var runs = [], cur = [];
+    for (var i = 0; i < coords.length; i++) {
+      var c = coords[i];
+      if (c[1] >= box.s && c[1] <= box.n && c[0] >= box.w && c[0] <= box.e) cur.push(c);
+      else { if (cur.length >= 2) runs.push(cur); cur = []; }
+    }
+    if (cur.length >= 2) runs.push(cur);
+    return runs;
+  }
+
+  function osmToGeoJSON(data, box) {
+    var feats = [], seen = {}, roads = 0, paths = 0, places = 0;
+    if (box) {
+      feats.push({
+        type: 'Feature',
+        properties: { name: 'OpenStreetMap area', kind: 'boundary' },
+        geometry: { type: 'Polygon', coordinates: [[[box.w, box.s], [box.e, box.s], [box.e, box.n], [box.w, box.n], [box.w, box.s]]] }
+      });
+    }
+    (data.elements || []).forEach(function (el) {
+      var t = el.tags || {};
+      if (el.type === 'way' && el.geometry && t.highway) {
+        var cls = String(t.highway).replace(/_link$/, '');
+        var coords = el.geometry.filter(Boolean).map(function (p) { return [p.lon, p.lat]; });
+        if (coords.length < 2) return;
+        var ow = t.oneway, oneway = (ow === 'yes' || ow === 'true' || ow === '1');
+        if (ow === '-1' || ow === 'reverse') { coords.reverse(); oneway = true; }
+        if (!ow && t.junction === 'roundabout') oneway = true;
+        var props = { highway: cls, class: cls, osm_id: el.id };
+        if (t.name) props.name = t.name;
+        if (t.maxspeed && /^\s*\d/.test(t.maxspeed)) props.maxspeed = t.maxspeed;
+        if (oneway) props.oneway = 'yes';
+        clipRuns(coords, box).forEach(function (run) {
+          feats.push({ type: 'Feature', properties: props, geometry: { type: 'LineString', coordinates: run } });
+          if (OSM_FOOT_CLASSES[cls]) paths++; else roads++;
+        });
+      } else if (t.name && places < OSM_MAX_PLACES) {
+        var c = el.center || (el.lat != null ? { lat: el.lat, lon: el.lon } : null);
+        if (!c) return;
+        var key = t.name + '|' + c.lat.toFixed(5) + '|' + c.lon.toFixed(5);
+        if (seen[key]) return;
+        seen[key] = 1;
+        var street = [t['addr:housenumber'], t['addr:street']].filter(Boolean).join(' ');
+        feats.push({
+          type: 'Feature',
+          properties: { name: t.name, kind: 'place', address: street ? t.name + ', ' + street : t.name, osm_id: el.id },
+          geometry: { type: 'Point', coordinates: [c.lon, c.lat] }
+        });
+        places++;
+      }
+    });
+    return { fc: { type: 'FeatureCollection', features: feats }, roads: roads, paths: paths, places: places };
+  }
+
+  function fetchOverpass(query, i) {
+    if (i >= OVERPASS_URLS.length) return Promise.reject(new Error('All OpenStreetMap servers failed.'));
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 60000);
+    return fetch(OVERPASS_URLS[i], {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: 'data=' + encodeURIComponent(query),
+      signal: ctrl ? ctrl.signal : undefined
+    }).then(function (r) {
+      clearTimeout(timer);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (data) {
+      // Overpass can answer 200 with a "remark" when it ran out of time or memory.
+      if (data && data.remark && /error|timed out|out of memory/i.test(data.remark)) throw new Error(data.remark);
+      return data;
+    }).catch(function () {
+      clearTimeout(timer);
+      return fetchOverpass(query, i + 1);
+    });
+  }
+
+  var osmInput = document.getElementById('osmSearch');
+  var osmGo = document.getElementById('osmGo');
+  var osmList = document.getElementById('osmResults');
+  var OSM_MIN_LAT_SPAN = 0.008;   // never load less than about 900 m, so there is a network to route on
+  var OSM_MIN_LNG_SPAN = 0.010;
+
+  function setOsmBusy(on) { osmBusy = on; osmGo.disabled = on; }
+
+  // Download + convert + hand to load(). `b` is a Leaflet LatLngBounds.
+  function loadOsmBounds(b, name, note) {
+    if (osmBusy) return;
+    setOsmBusy(true);
+    setStatus('Downloading roads and paths from OpenStreetMap\u2026');
+    fetchOverpass(osmQuery(b), 0).then(function (data) {
+      var res = osmToGeoJSON(data, { s: b.getSouth(), w: b.getWest(), n: b.getNorth(), e: b.getEast() });
+      if (!res.roads && !res.paths) {
+        setStatus('No roads or paths were found there. Try another place.', true);
+        return;
+      }
+      var label = 'OpenStreetMap \u2013 ' + name + ' (' + res.roads + ' road segments, ' + res.paths +
+        ' footpaths, ' + res.places + ' places' + (note ? '; ' + note : '') + ')';
+      load(res.fc, label, JSON.stringify(res.fc));
+    }).catch(function () {
+      setStatus('Could not download from OpenStreetMap. Check your internet connection, or try a smaller area.', true);
+    }).then(function () { setOsmBusy(false); });
+  }
+
+  // Turn a Nominatim result into the box to download. Small places use their own
+  // outline (padded a little); big ones (a city, a county) use a maximum-size box
+  // centred on the place; tiny ones (a single building) are widened to a minimum.
+  function boundsForPlace(row) {
+    var lat = +row.lat, lng = +row.lon, bb = row.boundingbox || [], note = '';
+    var s = +bb[0], n = +bb[1], w = +bb[2], e = +bb[3];
+    if (!(isFinite(s) && isFinite(n) && isFinite(w) && isFinite(e))) { s = n = lat; w = e = lng; }
+    var latSpan = n - s, lngSpan = e - w, cLat = (s + n) / 2, cLng = (w + e) / 2;
+    if (latSpan > OSM_MAX_LAT_SPAN || lngSpan > OSM_MAX_LNG_SPAN) {
+      cLat = lat; cLng = lng;
+      latSpan = OSM_MAX_LAT_SPAN; lngSpan = OSM_MAX_LNG_SPAN;
+      note = 'central area only';
+    } else {
+      latSpan = Math.max(latSpan * 1.1, OSM_MIN_LAT_SPAN);
+      lngSpan = Math.max(lngSpan * 1.1, OSM_MIN_LNG_SPAN);
+      latSpan = Math.min(latSpan, OSM_MAX_LAT_SPAN);
+      lngSpan = Math.min(lngSpan, OSM_MAX_LNG_SPAN);
+    }
+    return {
+      bounds: L.latLngBounds([cLat - latSpan / 2, cLng - lngSpan / 2], [cLat + latSpan / 2, cLng + lngSpan / 2]),
+      note: note
+    };
+  }
+
+  // Nominatim asks for at most one request per second; share the throttle with the start/end search.
+  function nominatimPlaces(q) {
+    var url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=' + encodeURIComponent(q);
+    var wait = Math.max(0, osmLast + 1100 - Date.now());
+    return new Promise(function (resolve) { setTimeout(resolve, wait); }).then(function () {
+      osmLast = Date.now();
+      return fetch(url, { headers: { 'Accept': 'application/json' } });
+    }).then(function (r) {
+      if (!r.ok) throw new Error('http');
+      return r.json();
+    });
+  }
+
+  function placeTitle(row) {
+    return String(row.name || String(row.display_name || '').split(',')[0] || 'place').trim();
+  }
+
+  function chooseOsmPlace(row) {
+    osmList.hidden = true;
+    var a = boundsForPlace(row);
+    loadOsmBounds(a.bounds, placeTitle(row), a.note);
+  }
+
+  function showOsmResults(rows) {
+    osmList.innerHTML = '';
+    rows.forEach(function (row) {
+      var li = document.createElement('li');
+      li.textContent = placeTitle(row);
+      var sub = document.createElement('small');
+      sub.textContent = String(row.display_name || '').split(',').slice(1, 4).join(',').trim();
+      li.appendChild(sub);
+      li.addEventListener('mousedown', function (e) { e.preventDefault(); chooseOsmPlace(row); });
+      osmList.appendChild(li);
+    });
+    osmList.hidden = false;
+  }
+
+  function runOsmSearch() {
+    var q = osmInput.value.trim();
+    if (q.length < 3) { setStatus('Type a place name (at least 3 characters).', true); return; }
+    if (osmBusy) return;
+    setOsmBusy(true);
+    osmList.hidden = true;
+    setStatus('Searching OpenStreetMap\u2026');
+    nominatimPlaces(q).then(function (rows) {
+      setOsmBusy(false);
+      rows = (rows || []).filter(function (r) { return r && r.lat && r.lon; });
+      if (!rows.length) { setStatus('No place found for \u201c' + q + '\u201d. Try a different name.', true); return; }
+      if (rows.length === 1) { chooseOsmPlace(rows[0]); return; }
+      showOsmResults(rows);
+      setStatus('Pick the place you meant.');
+    }).catch(function () {
+      setOsmBusy(false);
+      setStatus('Could not search OpenStreetMap. Check your internet connection.', true);
+    });
+  }
+
+  osmGo.addEventListener('click', runOsmSearch);
+  osmInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); runOsmSearch(); }
+    else if (e.key === 'Escape') osmList.hidden = true;
+  });
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest || !e.target.closest('.osm')) osmList.hidden = true;
+  });
+
   ['dragenter', 'dragover'].forEach(function (ev) {
     document.addEventListener(ev, function (e) { e.preventDefault(); els.drop.classList.add('over'); });
   });
@@ -862,7 +1110,7 @@
       graphReady = true;
       graphStats = res.data;
       var s = res.data;
-      var msg = 'File was read correctly: ' + fileName;
+      var msg = (/^OpenStreetMap/.test(fileName) ? 'Loaded ' : 'File was read correctly: ') + fileName;
       setStatus(msg);
       updateFindEnabled();
     }).catch(function () {
@@ -954,7 +1202,7 @@
     selectedRank = rank;
     lastRoutesByColor.forEach(function (r) {
       var isSel = r.rank === rank;
-      r.layer.setStyle({ weight: isSel ? 8 : (r.rank === 1 ? 7 : 4), opacity: isSel ? 1 : (r.rank === 1 ? 0.95 : 0.6) });
+      r.layer.setStyle({ weight: isSel ? 8 : 4, opacity: isSel ? 1 : 0.6 });
       if (isSel) r.layer.bringToFront();
     });
     // reflect in the list
