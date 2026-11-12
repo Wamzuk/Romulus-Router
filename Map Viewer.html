@@ -110,6 +110,13 @@
   .actions .btn { flex: 1; }
 
   .results-panel { margin-top: 20px; }
+  .near-wrap { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--line); }
+  .near-wrap h2 { margin: 0 0 4px; font-size: 18px; font-weight: 800; color: var(--title); }
+  .near-wrap p.hint { margin: 0 0 10px; font-size: 14px; color: var(--muted); }
+  .near-wrap select { width: 100%; box-sizing: border-box; padding: 10px 12px; margin-bottom: 10px; font: inherit; font-size: 15px; color: var(--strong); background: #fff; border: 1px solid var(--field-line); border-radius: 14px; }
+  .near-wrap table { border-collapse: collapse; width: 100%; font-size: 14px; margin: 8px 0; }
+  .near-wrap th, .near-wrap td { text-align: left; padding: 3px 8px 3px 0; }
+  .near-wrap .bad { color: #b91c1c; }
   .results-panel h2 { margin: 0 0 10px; font-size: 18px; font-weight: 800; color: var(--title); }
   .route-note { margin: 0 0 12px; font-size: 14px; color: var(--muted); line-height: 1.5; }
   .route-note.warn { color: #c2410c; }
@@ -261,6 +268,15 @@
 
         <!-- Results (added) -->
         <div class="results-panel" id="routeResults" hidden></div>
+      </div>
+
+      <!-- Nearest place (added): k-d tree vs brute force over the places in the file -->
+      <div class="near-wrap" id="nearWrap" hidden>
+        <h2>Nearest place</h2>
+        <p class="hint">Finds the closest place to your start point.</p>
+        <select id="catSelect" aria-label="Type of place"></select>
+        <button type="button" class="btn primary" id="nearBtn" disabled>Find nearest</button>
+        <div class="results-panel" id="nearResults" hidden></div>
       </div>
     </div>
   </aside>
@@ -516,6 +532,7 @@
 
     // Build the routing graph on the C++ server from the same text.
     buildGraph(rawText, fileName);
+    sendPlaces();
   }
 
   // ---- Start / end point search ----
@@ -972,7 +989,8 @@
         var street = [t['addr:housenumber'], t['addr:street']].filter(Boolean).join(' ');
         feats.push({
           type: 'Feature',
-          properties: { name: t.name, kind: 'place', address: street ? t.name + ', ' + street : t.name, osm_id: el.id },
+          properties: Object.assign({ name: t.name, kind: 'place', address: street ? t.name + ', ' + street : t.name, osm_id: el.id },
+            (t.amenity || t.shop || t.tourism || t.leisure) ? { category: t.amenity || t.shop || t.tourism || t.leisure } : {}),
           geometry: { type: 'Point', coordinates: [c.lon, c.lat] }
         });
         places++;
@@ -1138,6 +1156,7 @@
   // ROUTING CLIENT (added). The page only sends requests and draws results;
   // all graph, snapping, routing and timing logic lives in the C++ server.
   // =========================================================================
+  var placesReady = false;      // true once /api/places succeeds
   var graphReady = false;       // true once /api/graph succeeds
   var graphStats = null;        // last /api/graph response
   var method = 'kdtree';        // kdtree | brute | both
@@ -1193,6 +1212,103 @@
     });
   }
 
+  // ---- Nearest place: k-d tree vs brute force over the named places ----
+  var nearLayers = [];
+
+  function titleCase(s) {
+    s = String(s).replace(/_/g, ' ').trim();
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  }
+
+  function categoryOf(p) {
+    var c = p.category || p.amenity || p.shop || p.tourism || p.leisure || '';
+    if (!c && p.categories && typeof p.categories === 'object') c = p.categories.primary || p.categories.main || '';
+    return typeof c === 'string' ? titleCase(c) : '';
+  }
+
+  // Every named point or building in the file (roads and the boundary are skipped).
+  function collectPlaces() {
+    var list = [], counts = {};
+    features.forEach(function (x) {
+      var props = (x.feature && x.feature.properties) || {};
+      if (x.kind === 'Line' || x.kind === 'No geometry' || props.kind === 'boundary') return;
+      if (x.kind === 'Polygon' && !props.name) return;
+      var ll = locationOf(x);
+      list.push({ name: x.name, category: categoryOf(props), lat: ll.lat, lng: ll.lng });
+      counts[x.name.toLowerCase()] = (counts[x.name.toLowerCase()] || 0) + 1;
+    });
+    // No type tag in the file: places that share a name (two Dunkin' shops) form a group
+    // of their own, and everything else is "Other".
+    list.forEach(function (p) {
+      if (!p.category) p.category = counts[p.name.toLowerCase()] > 1 ? p.name : 'Other';
+    });
+    return list;
+  }
+
+  function sendPlaces() {
+    placesReady = false;
+    var list = collectPlaces(), byCat = {};
+    list.forEach(function (p) { byCat[p.category] = (byCat[p.category] || 0) + 1; });
+    $('catSelect').innerHTML = '<option value="">Any place (' + list.length + ')</option>' +
+      Object.keys(byCat).sort(function (a, b) { return byCat[b] - byCat[a]; }).map(function (c) {
+        return '<option value="' + esc(c) + '">' + esc(c) + ' (' + byCat[c] + ')</option>';
+      }).join('');
+    $('nearWrap').hidden = !list.length;
+    if (!list.length) return;
+    postJSON('/api/places', { places: list }, false).then(function (res) {
+      placesReady = !!res.ok;
+      updateFindEnabled();
+    }).catch(function () { placesReady = false; });
+  }
+
+  function clearNearest() {
+    nearLayers.forEach(function (l) { map.removeLayer(l); });
+    nearLayers = [];
+    var r = $('nearResults');
+    if (r) r.hidden = true;
+  }
+
+  function fmtDist(m) { return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(2) + ' km'; }
+
+  function findNearest() {
+    if (!pts.start || !placesReady) return;
+    $('nearBtn').disabled = true;
+    postJSON('/api/nearest', { lat: pts.start.lat, lng: pts.start.lng, category: $('catSelect').value, repeat: 1000 }, false)
+      .then(function (res) {
+        updateFindEnabled();
+        var box = $('nearResults');
+        clearNearest();
+        box.hidden = false;
+        if (!res.ok) { box.innerHTML = '<p class="bad">' + esc(res.data.error || 'Search failed.') + '</p>'; return; }
+        var d = res.data, kd = d.kdtree, bf = d.brute, p = kd.place, ll = L.latLng(p.lat, p.lng);
+        nearLayers.push(
+          L.polyline([pts.start, ll], { color: '#f97316', weight: 3, dashArray: '6 8' }).addTo(map),
+          L.circleMarker(ll, { radius: 9, color: '#fff', weight: 3, fillColor: '#f97316', fillOpacity: 1 }).addTo(map)
+        );
+        map.fitBounds(L.latLngBounds([pts.start, ll]), { padding: [90, 90], maxZoom: 17 });
+        var faster = d.speedup >= 1
+          ? 'The k-d tree was ' + d.speedup.toFixed(1) + '\u00d7 faster.'
+          : 'Brute force was ' + (1 / d.speedup).toFixed(1) + '\u00d7 faster here (too few places for the tree to pay off).';
+        box.innerHTML =
+          '<h2>' + esc(p.name) + '</h2>' +
+          '<p class="hint">' + esc(p.category) + ' \u00b7 ' + fmtDist(kd.distanceMeters) + ' in a straight line</p>' +
+          '<table><tr><th>Method</th><th>Lookup</th></tr>' +
+          '<tr><td>k-d tree</td><td>' + fmtMicros(kd.lookupMicros) + '</td></tr>' +
+          '<tr><td>Brute force</td><td>' + fmtMicros(bf.lookupMicros) + '</td></tr></table>' +
+          '<p class="hint">Searched ' + d.candidates.toLocaleString() + ' places. ' +
+          (d.sameResult ? 'Both methods found the same place. ' : 'The two methods disagreed! ') + faster + '</p>' +
+          '<button type="button" class="btn" id="nearEnd">Use as end point</button>';
+        $('nearEnd').addEventListener('click', function () { choose('end', ll, p.name); });
+      })
+      .catch(function () {
+        updateFindEnabled();
+        var box = $('nearResults');
+        box.hidden = false;
+        box.innerHTML = '<p class="bad">Could not reach the server.</p>';
+      });
+  }
+  $('nearBtn').addEventListener('click', findNearest);
+
   // ---- Method segmented control ----
   var methodSeg = $('methodSeg');
   Array.prototype.forEach.call(methodSeg.querySelectorAll('button'), function (b) {
@@ -1209,10 +1325,12 @@
     var ready = graphReady && !!pts.start && !!pts.end && !busy;
     $('findBtn').disabled = !ready;
     $('compareBtn').disabled = !ready;
+    $('nearBtn').disabled = !(placesReady && !!pts.start);
   }
 
   // ---- Drawing ----
   function clearRoutes() {
+    clearNearest();
     routeLayers.forEach(function (l) { map.removeLayer(l); });
     snapLayers.forEach(function (l) { map.removeLayer(l); });
     routeLayers = [];

@@ -4,10 +4,12 @@ Romulus Router is a route finder that runs on a map. You give it a map of roads 
 
 The project also answers a question from our data-structures class: **how much faster is a k-d tree than a plain scan when finding the nearest road to a point?** The page can run both methods and show you the difference.
 
+It also applies the same comparison to a second job: **finding the nearest place** (a coffee shop, a hospital, a bus stop...) to a point, using a k-d tree over the places in your map against a plain scan of all of them.
+
 It has two parts:
 
 - **A web page** (`Map Viewer.html`) that shows the map and the controls.
-- **A C++ server** (in `server/`) that does the real work: building the road graph, finding the nearest road, finding routes, and timing everything.
+- **A C++ server** (in `server/`) that does the real work: building the road graph, finding the nearest road, finding the nearest place, finding routes, and timing everything.
 
 > **Never used a terminal or GeoJSON before?** Follow [Quick start](#quick-start-5-minutes) exactly as written. You can learn the rest later.
 
@@ -98,6 +100,7 @@ You're done. Continue with [Using the page](#using-the-page) to find your first 
 5. **Click Find route.** The quickest walking route is drawn on the map, and any alternatives are listed so you can click between them. The route you select is drawn thick and solid, and the others are thinner and faded. Each route shows its distance and walking time.
 6. **Click Compare** to run *both* methods on the same trip and open a screen of charts that compare their speed. It also runs a benchmark of many random lookups and confirms the two methods always pick the same road point.
 7. **Clear both points** starts over with new points.
+8. **Find the nearest place.** Once your map is loaded, a **Nearest place** panel appears under the route buttons. Choose a type of place from the list (for example *Hospital*, or *Any place*), set a **Start point**, and click **Find nearest**. The nearest matching place is marked on the map with a dashed line from your start point. The panel shows its distance (in a straight line), the lookup time of the k-d tree and of brute force, how many places were searched, and whether both methods picked the same place. Click **Use as end point** to route to it. See [Nearest place](#nearest-place) for how the types are chosen.
 
 What the page also does for you:
 
@@ -193,7 +196,7 @@ Use the following method.
    > I downloaded these files from Overture Maps: a Transportation (segment) file, a Places file, and a Base > Land Use file. Please combine them into one GeoJSON file for my Romulus Router project, in the same format as `uri_roads_paths_places_boundary.geojson`:
    >
    > - **Roads and footpaths:** keep the drivable `LineString` segments (classes `motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `residential`, `unclassified`, `service`, `living_street`) **and** the walking paths (classes `footway`, `pedestrian`, `path`, `steps`, `cycleway`). Remove ferries and roads closed to cars. Give each segment only these properties: `highway` and `class` (the same class value), `overture_id`, `name` (only if it has one), `maxspeed` (only if known, as `"25 mph"` for miles per hour or a bare number for km/h), and `oneway: "yes"` (only for one-way roads).
-   > - **Places:** keep them as `Point` features with only `name`, `kind` set to `"place"`, and `address` (only if known).
+   > - **Places:** keep them as `Point` features with only `name`, `kind` set to `"place"`, `category` (the place's primary category as plain text, such as `coffee_shop` or `hospital`, only if known), and `address` (only if known).
    > - **Boundary:** from the Land Use file, take only the single polygon with ID `PASTE-THE-ID-HERE` and keep it exactly as downloaded, including its `id`.
    > - Put the features in this order: roads and footpaths, places, then the boundary polygon. Save it as `network_with_boundary.geojson`, and tell me how many of each feature are in it.
 
@@ -214,7 +217,7 @@ print(collections.Counter(f["properties"].get("class") for f in d["features"] if
 
 For `uri_roads_paths_places_boundary.geojson` you should see `LineString: 876`, `Point: 260`, `Polygon: 1`, and classes such as `footway: 489`. For the roads-only `uri_roads_places_boundary.geojson` you should see `LineString: 265`, `Point: 217`, `Polygon: 1`. If there are no `LineString`s, there is nothing to route on.
 
-Start the server as in the [Quick start](#quick-start-5-minutes), then use **Load road network (.geojson)** to load your file. The server ignores points and polygons when it builds the road graph, so leaving the places and boundary in the file is safe. When it skips a polygon, it says so in the status line. If your file has footpaths, the status line also says how many footpath lines were loaded.
+Start the server as in the [Quick start](#quick-start-5-minutes), then use **Load road network (.geojson)** to load your file. The server ignores points and polygons when it builds the road graph, so leaving the places and boundary in the file is safe. The page sends the places to the server separately, for [nearest-place search](#nearest-place). When it skips a polygon, it says so in the status line. If your file has footpaths, the status line also says how many footpath lines were loaded.
 
 ---
 
@@ -236,6 +239,9 @@ Start the server as in the [Quick start](#quick-start-5-minutes), then use **Loa
 | "No place found for ..." | OpenStreetMap's search didn't recognise the name. Try a more specific or differently spelled name. |
 | A big city only loaded part of the city | That is expected. Areas are capped at about 2 miles across. Search a specific neighborhood to load another part. |
 | The timings on the Compare screen change every click | They are measured live, so they vary a little each time. The route and distances don't change. |
+| The **Nearest place** panel is missing | Your file has no named places. Load a file with `Point` places, or load an area by name, which includes named buildings and amenities. |
+| **Find nearest** is greyed out | Set a **Start point** first, and make sure a map is loaded and the server is running. |
+| "There are no places in that category." | The server was restarted since the page loaded its places. Reload the map. |
 | Search suggestions don't appear | Type at least 3 characters, and wait a second between searches. Place search needs the internet. |
 
 ---
@@ -247,8 +253,9 @@ Map Viewer.html                          the web page
 uri_roads_paths_places_boundary.geojson  sample data: URI campus, roads + footpaths
 uri_roads_places_boundary.geojson        sample data: URI campus, roads only
 server/
-  main.cpp                               the server: endpoints, routing, benchmark
+  main.cpp                               the server: endpoints, routing, nearest place, benchmark
   graph.hpp                              road graph, k-d tree, brute force, routing
+  places.hpp                             nearest-place search: a k-d tree per type of place
   geo.hpp                                distance, speed and walking helper functions
   json.hpp                               a small built-in JSON reader/writer
   http.hpp                               a small built-in web server
@@ -274,9 +281,20 @@ In plain words: when you load a map, the server turns it into a **graph**, which
 | **k-d tree** | A balanced 2-D k-d tree over the nodes (built once and timed). It finds the nearest node in O(log n) time on average, which is how a clicked point is snapped onto the network. |
 | **Brute force** | The O(n) baseline: check every node. It always returns the same node as the k-d tree, so the two can be compared directly. |
 | **Routing** | The route search over travel time finds the quickest route. Alternatives come from re-running it with the previous route's edges penalised, then removing duplicates and ranking the results. |
+| **Nearest place** | Finds the closest named place (optionally of one type) to a point. The server builds one k-d tree per type of place, plus one for "any place", and compares it with a brute-force scan of the same set. See [Nearest place](#nearest-place). |
 | **Benchmark** | Runs many random nearest-node queries through both methods, reports total and average time and the speedup, and confirms the two methods agree on every query. |
 
 The page does all the drawing. Every graph, k-d tree, snapping, routing and timing calculation happens in C++, so the comparison is measured fairly. When you load a place by name, the page downloads the data from OpenStreetMap and converts it to GeoJSON, then sends it to the server exactly as if you had uploaded a file.
+
+### Nearest place
+
+This is the same k-d tree versus brute-force comparison as the road snap, but over **places** instead of road nodes. It matches the course idea of finding the nearest coffee shop, hospital or bus stop among thousands of map points.
+
+- **What counts as a place.** Every named point in your file, and every named building. Roads and the boundary outline are not places. The page collects them when a file loads and sends them to the server (`/api/places`), separately from the road graph.
+- **Where the types come from.** The page uses a place's `category`, `amenity`, `shop`, `tourism` or `leisure` property, or Overture's `categories.primary`, if it has one. Places loaded by name from OpenStreetMap keep their `amenity`, `shop`, `tourism` or `leisure` tag, so they get types like *Cafe* or *Hospital*. A place with no type is grouped with other places that share its name (so two Dunkin' shops form a *Dunkin'* group), and anything left is *Other*. The two sample files have no type property, so in them you will mostly see *Any place*, *Other* and repeated names. To get proper types in your own file, add a `category` property to each place (see [Step 3](#step-3-combine-the-files-into-one)).
+- **How it searches.** The k-d tree and the brute-force scan look at exactly the same set of places and use the same flat projection as the road snap, so they should always agree. The result says whether they did.
+- **Distance.** The distance shown is in a straight line from your start point. It is not a walking distance. Use **Use as end point** and **Find route** for that.
+- **Small data.** With only a few dozen places, brute force can be as fast as the k-d tree or faster, since the tree has setup overhead. The page says so when that happens. The k-d tree wins as the number of places grows.
 
 ### Walking and driving
 
@@ -308,6 +326,8 @@ You don't need this to use the project. It is here for anyone who wants to call 
 | `GET /` | none | The `Map Viewer.html` page. |
 | `POST /api/graph` | raw GeoJSON text | `{ nodes, edges, kdTreeBuildMs, speedInfoFound, warnings[] }` (warnings mention ignored polygons and the number of footpath lines loaded) |
 | `POST /api/route` | `{ start:{lat,lng}, end:{lat,lng}, method, alternatives, repeat, mode }`. `mode` is `"walk"` (default) or `"drive"`. | per-method `run` objects with `snappedStart/End`, `routes[]`, and timings; `method: "both"` adds `lookupSpeedup` and `sameResult` |
+| `POST /api/places` | `{ places:[{ name, category, lat, lng }, ...] }` | `{ count, buildMs }`. Builds the nearest-place search. The page calls this each time a file loads. |
+| `POST /api/nearest` | `{ lat, lng, category, repeat }`. An empty or missing `category` means any place. `repeat` (1 to 100000, default 1000) is how many times each lookup is repeated for timing. | `{ kdtree, brute, candidates, sameResult, speedup }`. Each of `kdtree` and `brute` holds `place`, `distanceMeters` and `lookupMicros`. |
 | `POST /api/benchmark` | `{ queries, seed }` | `{ queries, kdTreeTotalMs, kdTreeAvgMicros, bruteTotalMs, bruteAvgMicros, speedup, mismatches }` |
 
 ---
@@ -322,6 +342,7 @@ You don't need this to use the project. It is here for anyone who wants to call 
 | **Overpass API** | A free service that returns OpenStreetMap data for a chosen area. The page uses it when you load a place by name. |
 | **Nominatim** | OpenStreetMap's place-name search. It turns a name like "Providence College" into a location. |
 | **Graph / node / edge** | A network. Nodes are points (intersections or bends in a road or path); edges are the pieces joining them. |
+| **Nearest place** | The closest named place to a point, such as the nearest hospital, found with the k-d tree and checked against brute force. |
 | **Snapping** | Moving the spot you clicked to the nearest point on the road network. |
 | **k-d tree** | A data structure that splits points into regions so the nearest one can be found without checking all of them. |
 | **Brute force** | Checking every possibility one by one. Simple, but slow on large data. |
