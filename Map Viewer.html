@@ -273,7 +273,7 @@
       <!-- Nearest place (added): k-d tree vs brute force over the places in the file -->
       <div class="near-wrap" id="nearWrap" hidden>
         <h2>Nearest place</h2>
-        <p class="hint">Finds the closest place to your start point.</p>
+        <p class="hint">Finds the closest other place to your start point.</p>
         <select id="catSelect" aria-label="Type of place"></select>
         <button type="button" class="btn primary" id="nearBtn" disabled>Find nearest</button>
         <div class="results-panel" id="nearResults" hidden></div>
@@ -1273,7 +1273,7 @@
   function findNearest() {
     if (!pts.start || !placesReady) return;
     $('nearBtn').disabled = true;
-    postJSON('/api/nearest', { lat: pts.start.lat, lng: pts.start.lng, category: $('catSelect').value, repeat: 1000 }, false)
+    postJSON('/api/nearest', { lat: pts.start.lat, lng: pts.start.lng, category: $('catSelect').value, repeat: 1000, startName: ui.start.input.value }, false)
       .then(function (res) {
         updateFindEnabled();
         var box = $('nearResults');
@@ -1281,6 +1281,9 @@
         box.hidden = false;
         if (!res.ok) { box.innerHTML = '<p class="bad">' + esc(res.data.error || 'Search failed.') + '</p>'; return; }
         var d = res.data, kd = d.kdtree, bf = d.brute, p = kd.place, ll = L.latLng(p.lat, p.lng);
+        // Only a current server reports `skipped`. Without it the old build is still running.
+        var oldServer = d.skipped === undefined
+          ? '<p class="bad">The server is running an old build and may return the place you started at. Stop it, run <b>make clean &amp;&amp; make</b> in the server folder, start it again, and reload your map.</p>' : '';
         nearLayers.push(
           L.polyline([pts.start, ll], { color: '#f97316', weight: 3, dashArray: '6 8' }).addTo(map),
           L.circleMarker(ll, { radius: 9, color: '#fff', weight: 3, fillColor: '#f97316', fillOpacity: 1 }).addTo(map)
@@ -1290,12 +1293,14 @@
           ? 'The k-d tree was ' + d.speedup.toFixed(1) + '\u00d7 faster.'
           : 'Brute force was ' + (1 / d.speedup).toFixed(1) + '\u00d7 faster here (too few places for the tree to pay off).';
         box.innerHTML =
+          oldServer +
           '<h2>' + esc(p.name) + '</h2>' +
           '<p class="hint">' + esc(p.category) + ' \u00b7 ' + fmtDist(kd.distanceMeters) + ' in a straight line</p>' +
           '<table><tr><th>Method</th><th>Lookup</th></tr>' +
           '<tr><td>k-d tree</td><td>' + fmtMicros(kd.lookupMicros) + '</td></tr>' +
           '<tr><td>Brute force</td><td>' + fmtMicros(bf.lookupMicros) + '</td></tr></table>' +
-          '<p class="hint">Searched ' + d.candidates.toLocaleString() + ' places. ' +
+          '<p class="hint">Searched ' + d.candidates.toLocaleString() + ' places' +
+          (d.skipped ? ' (skipped ' + d.skipped + ' at your start point). ' : '. ') +
           (d.sameResult ? 'Both methods found the same place. ' : 'The two methods disagreed! ') + faster + '</p>' +
           '<button type="button" class="btn" id="nearEnd">Use as end point</button>';
         $('nearEnd').addEventListener('click', function () { choose('end', ll, p.name); });

@@ -241,6 +241,7 @@ Start the server as in the [Quick start](#quick-start-5-minutes), then use **Loa
 | The timings on the Compare screen change every click | They are measured live, so they vary a little each time. The route and distances don't change. |
 | The **Nearest place** panel is missing | Your file has no named places. Load a file with `Point` places, or load an area by name, which includes named buildings and amenities. |
 | **Find nearest** is greyed out | Set a **Start point** first, and make sure a map is loaded and the server is running. |
+| "There is no other place of that type to find." | Your start point is the only place of that type. Choose "Any place" or a different type. |
 | "There are no places in that category." | The server was restarted since the page loaded its places. Reload the map. |
 | Search suggestions don't appear | Type at least 3 characters, and wait a second between searches. Place search needs the internet. |
 
@@ -293,6 +294,7 @@ This is the same k-d tree versus brute-force comparison as the road snap, but ov
 - **What counts as a place.** Every named point in your file, and every named building. Roads and the boundary outline are not places. The page collects them when a file loads and sends them to the server (`/api/places`), separately from the road graph.
 - **Where the types come from.** The page uses a place's `category`, `amenity`, `shop`, `tourism` or `leisure` property, or Overture's `categories.primary`, if it has one. Places loaded by name from OpenStreetMap keep their `amenity`, `shop`, `tourism` or `leisure` tag, so they get types like *Cafe* or *Hospital*. A place with no type is grouped with other places that share its name (so two Dunkin' shops form a *Dunkin'* group), and anything left is *Other*. The two sample files have no type property, so in them you will mostly see *Any place*, *Other* and repeated names. To get proper types in your own file, add a `category` property to each place (see [Step 3](#step-3-combine-the-files-into-one)).
 - **How it searches.** The k-d tree and the brute-force scan look at exactly the same set of places and use the same flat projection as the road snap, so they should always agree. The result says whether they did.
+- **The place you start at is skipped.** If your start point is a place (for example you picked *Tyler Hall*), the search finds the nearest *other* place instead of returning the one you are standing on. Any place within 2 metres of the start point is ignored, and so is any place with the *same name* within 100 metres (the same building listed twice, such as an outline and a separate point). Both the k-d tree and brute force skip the same places, and the result says how many were skipped.
 - **Distance.** The distance shown is in a straight line from your start point. It is not a walking distance. Use **Use as end point** and **Find route** for that.
 - **Small data.** With only a few dozen places, brute force can be as fast as the k-d tree or faster, since the tree has setup overhead. The page says so when that happens. The k-d tree wins as the number of places grows.
 
@@ -327,7 +329,7 @@ You don't need this to use the project. It is here for anyone who wants to call 
 | `POST /api/graph` | raw GeoJSON text | `{ nodes, edges, kdTreeBuildMs, speedInfoFound, warnings[] }` (warnings mention ignored polygons and the number of footpath lines loaded) |
 | `POST /api/route` | `{ start:{lat,lng}, end:{lat,lng}, method, alternatives, repeat, mode }`. `mode` is `"walk"` (default) or `"drive"`. | per-method `run` objects with `snappedStart/End`, `routes[]`, and timings; `method: "both"` adds `lookupSpeedup` and `sameResult` |
 | `POST /api/places` | `{ places:[{ name, category, lat, lng }, ...] }` | `{ count, buildMs }`. Builds the nearest-place search. The page calls this each time a file loads. |
-| `POST /api/nearest` | `{ lat, lng, category, repeat }`. An empty or missing `category` means any place. `repeat` (1 to 100000, default 1000) is how many times each lookup is repeated for timing. | `{ kdtree, brute, candidates, sameResult, speedup }`. Each of `kdtree` and `brute` holds `place`, `distanceMeters` and `lookupMicros`. |
+| `POST /api/nearest` | `{ lat, lng, category, repeat, excludeMeters }`. An empty or missing `category` means any place. Places within `excludeMeters` of the point are ignored (default 2, use 0 to include everything), as are places named `startName` within 100 m of it. Both are optional. `repeat` (1 to 100000, default 1000) is how many times each lookup is repeated for timing. | `{ kdtree, brute, candidates, skipped, sameResult, speedup }`. Each of `kdtree` and `brute` holds `place`, `distanceMeters` and `lookupMicros`. |
 | `POST /api/benchmark` | `{ queries, seed }` | `{ queries, kdTreeTotalMs, kdTreeAvgMicros, bruteTotalMs, bruteAvgMicros, speedup, mismatches }` |
 
 ---
