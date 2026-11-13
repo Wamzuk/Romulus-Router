@@ -70,13 +70,16 @@ public:
     }
 
     // Nearest node to a projected query point (qx, qy). Returns node index.
-    int nearest(double qx, double qy) const {
+    // skip (optional): a predicate on node indices; nodes it accepts are ignored,
+    // e.g. to find the nearest point OTHER than the one at the query. The default
+    // (null) skips nothing, so road snapping behaves exactly as before.
+    int nearest(double qx, double qy, const std::function<bool(int)>* skip = nullptr) const {
         if (root_ < 0) return -1;
         // Search state is local (not shared members) so concurrent requests
         // from different connection threads cannot corrupt each other.
         int best = -1;
         double bestD2 = std::numeric_limits<double>::infinity();
-        searchRec(root_, qx, qy, 0, best, bestD2);
+        searchRec(root_, qx, qy, 0, best, bestD2, skip);
         return best;
     }
 
@@ -109,24 +112,24 @@ private:
         return self;
     }
 
-    void searchRec(int node, double qx, double qy, int depth, int& best, double& bestD2) const {
+    void searchRec(int node, double qx, double qy, int depth, int& best, double& bestD2, const std::function<bool(int)>* skip) const {
         if (node < 0) return;
         const KdNode& kn = tree_[node];
         int p = kn.point;
         double dx = (*nodes_)[p].px - qx;
         double dy = (*nodes_)[p].py - qy;
         double d2 = dx * dx + dy * dy;
-        if (d2 < bestD2) { bestD2 = d2; best = p; }
+        if (d2 < bestD2 && !(skip && (*skip)(p))) { bestD2 = d2; best = p; }
 
         int axis = depth % 2;
         double diff = (axis == 0 ? qx - (*nodes_)[p].px : qy - (*nodes_)[p].py);
         int nearNode = diff < 0 ? kn.left : kn.right;
         int farNode = diff < 0 ? kn.right : kn.left;
 
-        searchRec(nearNode, qx, qy, depth + 1, best, bestD2);
+        searchRec(nearNode, qx, qy, depth + 1, best, bestD2, skip);
         // Only cross to the far side if the splitting plane is closer than the
         // best distance found so far -- this pruning is what makes it fast.
-        if (diff * diff < bestD2) searchRec(farNode, qx, qy, depth + 1, best, bestD2);
+        if (diff * diff < bestD2) searchRec(farNode, qx, qy, depth + 1, best, bestD2, skip);
     }
 };
 

@@ -13,6 +13,10 @@
 #include <unordered_map>
 #include <vector>
 #include <chrono>
+#include <algorithm>
+#include <cctype>
+#include <functional>
+#include <limits>
 
 class PlaceIndex {
 public:
@@ -45,15 +49,32 @@ public:
         return it == groups_.end() ? 0 : it->second->ids.size();
     }
 
-    // Both return an index into `places`, or -1 if the category is empty/unknown.
-    int nearestKd(const std::string& cat, double lat, double lng) const {
-        auto it = groups_.find(cat);
-        if (it == groups_.end()) return -1;
-        int i = it->second->tree.nearest(proj_.x(lng), proj_.y(lat));
-        return i < 0 ? -1 : it->second->ids[i];
+    // Places to ignore when searching FROM a point that is itself a place: anything
+    // within sameSpotM of it, plus anything with the same name within sameNameM
+    // (the same building listed twice). Computed once per request, outside the timing.
+    std::vector<int> excludedAt(double lat, double lng, const std::string& startName,
+                                double sameSpotM, double sameNameM) const {
+        std::vector<int> out;
+        for (size_t i = 0; i < places.size(); i++) {
+            double d = geo::haversineMeters(lat, lng, places[i].lat, places[i].lng);
+            if (d <= sameSpotM || (d <= sameNameM && sameName(places[i].name, startName)))
+                out.push_back((int)i);
+        }
+        return out;
     }
 
-    int nearestBrute(const std::string& cat, double lat, double lng) const {
+    // Both return an index into `places`, or -1 if nothing qualifies. Places listed
+    // in `excluded` are ignored (so starting AT a place finds the next-nearest one).
+    int nearestKd(const std::string& cat, double lat, double lng, const std::vector<int>& excluded) const {
+        auto it = groups_.find(cat);
+        if (it == groups_.end()) return -1;
+        const Group& g = *it->second;
+        std::function<bool(int)> skip = [&](int local) { return isExcluded(excluded, g.ids[local]); };
+        int i = g.tree.nearest(proj_.x(lng), proj_.y(lat), excluded.empty() ? nullptr : &skip);
+        return i < 0 ? -1 : g.ids[i];
+    }
+
+    int nearestBrute(const std::string& cat, double lat, double lng, const std::vector<int>& excluded) const {
         auto it = groups_.find(cat);
         if (it == groups_.end()) return -1;
         const Group& g = *it->second;
@@ -63,7 +84,7 @@ public:
         for (size_t i = 0; i < g.nodes.size(); i++) {
             double dx = g.nodes[i].px - qx, dy = g.nodes[i].py - qy;
             double d2 = dx * dx + dy * dy;
-            if (d2 < bestD2) { bestD2 = d2; best = g.ids[i]; }
+            if (d2 < bestD2 && !isExcluded(excluded, g.ids[i])) { bestD2 = d2; best = g.ids[i]; }
         }
         return best;
     }
@@ -74,6 +95,22 @@ private:
     struct Group { std::vector<Node> nodes; std::vector<int> ids; KdTree tree; };
     std::unordered_map<std::string, std::unique_ptr<Group>> groups_;
     geo::Projector proj_;
+
+    static bool isExcluded(const std::vector<int>& excluded, int id) {
+        return std::find(excluded.begin(), excluded.end(), id) != excluded.end();
+    }
+
+    static std::string lower(std::string s) {
+        for (auto& c : s) c = (char)std::tolower((unsigned char)c);
+        return s;
+    }
+
+    // Same name, ignoring case; also accepts a start label like "Tyler Hall, Kingston".
+    static bool sameName(const std::string& placeName, const std::string& startName) {
+        if (placeName.empty() || startName.empty()) return false;
+        std::string a = lower(placeName), b = lower(startName);
+        return a == b || b.compare(0, a.size() + 1, a + ",") == 0;
+    }
 
     void add(const std::string& key, int idx) {
         auto& g = groups_[key];

@@ -392,6 +392,15 @@ static http::Response handleNearest(const http::Request& req) {
     int repeat = body.find("repeat") ? (int)body.find("repeat")->asNumber(1000) : 1000;
     if (repeat < 1) repeat = 1;
     if (repeat > 100000) repeat = 100000;
+    // Ignore places this close to the query point, so starting AT a place finds
+    // the next-nearest one instead of the place itself.
+    std::string startName = body.find("startName") ? body.find("startName")->asString("") : "";
+    double skipM = body.find("excludeMeters") ? body.find("excludeMeters")->asNumber(2.0) : 2.0;
+    if (!(skipM >= 0)) skipM = 0;
+    if (skipM > 1000) skipM = 1000;
+
+    // Also ignore the same building listed twice: same name within 100 m of the start.
+    std::vector<int> excluded = idx->excludedAt(lat, lng, startName, skipM, 100.0);
 
     size_t candidates = idx->groupSize(cat);
     if (candidates == 0) return errorResponse("There are no places in that category.");
@@ -401,14 +410,14 @@ static http::Response handleNearest(const http::Request& req) {
     int kdId = -1, brId = -1;
 
     auto t0 = Clock::now();
-    for (int i = 0; i < repeat; i++) { kdId = idx->nearestKd(cat, lat, lng); sink = sink + kdId; }
+    for (int i = 0; i < repeat; i++) { kdId = idx->nearestKd(cat, lat, lng, excluded); sink = sink + kdId; }
     double kdMicros = microsSince(t0) / repeat;
 
     auto t1 = Clock::now();
-    for (int i = 0; i < repeat; i++) { brId = idx->nearestBrute(cat, lat, lng); sink = sink + brId; }
+    for (int i = 0; i < repeat; i++) { brId = idx->nearestBrute(cat, lat, lng, excluded); sink = sink + brId; }
     double brMicros = microsSince(t1) / repeat;
 
-    if (kdId < 0 || brId < 0) return errorResponse("Could not find a nearest place.");
+    if (kdId < 0 || brId < 0) return errorResponse("There is no other place of that type to find.");
 
     auto runJson = [&](int id, double micros) {
         const PlaceIndex::Place& p = idx->places[id];
@@ -434,6 +443,7 @@ static http::Response handleNearest(const http::Request& req) {
     out.set("kdtree", kd);
     out.set("brute", br);
     out.set("candidates", (double)candidates);
+    out.set("skipped", (double)excluded.size());
     out.set("sameResult", kdId == brId || std::fabs(dKd - dBr) < 1e-6);
     out.set("speedup", kdMicros > 0 ? brMicros / kdMicros : 0.0);
     return jsonResponse(out);
